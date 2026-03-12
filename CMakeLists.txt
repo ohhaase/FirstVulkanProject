@@ -1,16 +1,18 @@
 # Specify CMake version(s)
-cmake_minimum_required(VERSION 3.15...4.3)
+cmake_minimum_required(VERSION 4.0)
+
 
 # Declare project
 project(
-    ExProject
+    FirstVulkanProject
     VERSION 1.0
     LANGUAGES CXX
 )
 
 # Compiler settings
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 
 # Default build type (adds -O3)
 if(NOT CMAKE_BUILD_TYPE)
@@ -33,6 +35,43 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${PROJECT_SOURCE_DIR}/src
 )
 
-# Link external libraries, OpenMP as an example
-find_package(OpenMP REQUIRED)
-target_link_libraries(${PROJECT_NAME} PRIVATE OpenMP::OpenMP_CXX)
+# Link external libraries
+
+# Vulkan
+find_package(Vulkan REQUIRED)
+
+target_link_libraries (${PROJECT_NAME} Vulkan::Vulkan)
+
+# GLFW
+include(FetchContent)
+
+FetchContent_Declare(glfw
+    GIT_REPOSITORY https://github.com/glfw/glfw
+    GIT_TAG origin/master
+)
+
+FetchContent_GetProperties(glfw)
+if(NOT glfw_POPULATED)
+    FetchContent_MakeAvailable(glfw)
+endif()
+
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+
+target_link_libraries(${PROJECT_NAME} glfw)
+
+# GLM
+include(FetchContent)
+
+FetchContent_Declare(
+	glm
+	GIT_REPOSITORY	https://github.com/g-truc/glm.git
+	GIT_TAG 	8d1fd52e5ab5590e2c81768ace50c72bae28f2ed #refs/tags/1.0.1
+)
+
+if(NOT glm_POPULATED)
+    FetchContent_MakeAvailable(glm)
+endif()
+
+target_link_libraries(${PROJECT_NAME} glm::glm)

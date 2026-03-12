@@ -5,10 +5,10 @@ Template for me to use to make personal C++ projects. Focused on my weird develo
 To build, we first need to get CMake initialized. Run
 
 ```
-cmake -G "Unix Makefiles" -B build -DCMAKE_CXX_COMPILER='g++'
+cmake -G "Ninja" -B build -DCMAKE_CXX_COMPILER='g++'
 ```
 
-This makes a build directory, forces cmake to make a Unix Makefile, and sets the compiler to GNU++. 
+This makes a build directory and forces cmake to make a Ninja makefile. This is necessary for Vulkan, which doesn't support Unix Makefiles.
 
 Note: Maybe should relax the GNU++ specification in the future.
 
