@@ -1,6 +1,6 @@
-# C++ Project Template
+# First Vulkan Project
 
-Template for me to use to make personal C++ projects. Focused on my weird development style, because I work both on Mac and Windows machines. So, these projects are typically worked on in VSCode, using CMake to build. These are both OS agnostic (hopefully lol). For simpler projects that don't include external libraries and the sort, the included Makefile should be able to compile everything as well.
+My first vulkan project. Using it to learn how Vulkan works so I can use it for GPU stuff in the future.
 
 To build, we first need to get CMake initialized. Run
 
