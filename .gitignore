@@ -1,0 +1,8 @@
+run.exe
+run
+build/
+data/
+**/__pycache__
+**/.DS_Store
+*.ipynb
+.vscode/
