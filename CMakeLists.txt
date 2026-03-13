@@ -68,6 +68,7 @@ FetchContent_Declare(
 	GIT_TAG 	8d1fd52e5ab5590e2c81768ace50c72bae28f2ed #refs/tags/1.0.1
 )
 
+FetchContent_GetProperties(glm)
 if(NOT glm_POPULATED)
     FetchContent_MakeAvailable(glm)
 endif()
