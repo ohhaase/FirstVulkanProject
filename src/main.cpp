@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <limits>
 #include <algorithm>
+#include <fstream>
 
 constexpr uint32_t WIDTH = 800;
 constexpr uint32_t HEIGHT = 600;
@@ -23,6 +24,29 @@ constexpr bool enableValidationLayers = false;
 #else
 constexpr bool enableValidationLayers = true;
 #endif
+
+
+// Helper function for reading files
+static std::vector<char> readFile(const std::string& filename)
+{
+    std::ifstream file(filename, std::ios::ate | std::ios::binary);
+
+    if (!file.is_open())
+    {
+        throw std::runtime_error("Failed to open file!");
+    }
+
+    // Make buffer to store file data
+    std::vector<char> buffer(file.tellg());
+
+    // Go back to beginning and copy all data
+    file.seekg(0, std::ios::beg);
+    file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+
+    file.close();
+
+    return buffer;
+}
 
 class HelloTriangleApplication
 {
@@ -65,6 +89,15 @@ class HelloTriangleApplication
         vk::Extent2D swapChainExtent;
         std::vector<vk::raii::ImageView> swapChainImageViews;
 
+        // Pipeline layout (textures eventually?)
+        vk::raii::PipelineLayout pipelineLayout = nullptr;
+
+        // Graphics pipeline
+        vk::raii::Pipeline graphicsPipeline = nullptr; 
+
+        // Supports the required extensions (only one for now?)
+        std::vector<const char*> requiredDeviceExtension = {vk::KHRSwapchainExtensionName};
+
         void initWindow()
         {
             // Initialize GLFW
@@ -87,6 +120,7 @@ class HelloTriangleApplication
             createLogicalDevice();
             createSwapChain();
             createImageViews();
+            createGraphicsPipeline();
         }
 
         void mainLoop()
@@ -282,9 +316,6 @@ class HelloTriangleApplication
             // Supports graphics commands
             bool supportsGraphics = std::ranges::any_of(queueFamilies, [](auto const &qfp) {return !!(qfp.queueFlags & vk::QueueFlagBits::eGraphics); });
 
-            // Supports the required extensions (only one for now?)
-            std::vector<const char*> requiredDeviceExtension = {vk::KHRSwapchainExtensionName};
-
             bool supportsAllRequiredExtensions = std::ranges::all_of(requiredDeviceExtension, 
                                                                      [&availableDeviceExtensions](auto const& requiredDeviceExtension) {
                                                                         return std::ranges::any_of(availableDeviceExtensions,
@@ -340,9 +371,6 @@ class HelloTriangleApplication
 
             // Physical device features
             vk::PhysicalDeviceFeatures deviceFeatures; // All false for now, will come back to later
-            
-            // Required device extensions
-            std::vector<const char*> requiredDeviceExtension = {vk::KHRSwapchainExtensionName}; // will add more later
 
             // Create logical device
             vk::DeviceCreateInfo deviceCreateInfo{.pNext = &featureChain.get<vk::PhysicalDeviceFeatures2>(),
@@ -463,6 +491,85 @@ class HelloTriangleApplication
                 imageViewCreateInfo.image = image;
                 swapChainImageViews.emplace_back(device, imageViewCreateInfo);
             }
+        }
+
+        void createGraphicsPipeline()
+        {
+            // Vertex + fragment shader
+            vk::raii::ShaderModule shaderModule = createShaderModule(readFile(std::string(SHADER_DIR) + "slang.spv"));
+
+            vk::PipelineShaderStageCreateInfo vertShaderStageInfo{.stage = vk::ShaderStageFlagBits::eVertex,
+                                                                  .module = shaderModule,
+                                                                  .pName = "vertMain"};
+                                                    
+            vk::PipelineShaderStageCreateInfo fragShaderStageInfo{.stage = vk::ShaderStageFlagBits::eFragment,
+                                                                  .module = shaderModule,
+                                                                  .pName = "fragMain"};
+
+            vk::PipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
+
+            // Fixed parts of the graphics pipeline
+            vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
+            vk::PipelineInputAssemblyStateCreateInfo inputAssembly {.topology = vk::PrimitiveTopology::eTriangleList};
+            vk::PipelineViewportStateCreateInfo viewportState{.viewportCount = 1, .scissorCount = 1};
+            vk::PipelineRasterizationStateCreateInfo rasterizer{.depthClampEnable = vk::False,
+                                                                .rasterizerDiscardEnable = vk::False,
+                                                                .polygonMode = vk::PolygonMode::eFill,
+                                                                .cullMode = vk::CullModeFlagBits::eBack,
+                                                                .frontFace = vk::FrontFace::eClockwise,
+                                                                .depthBiasEnable = vk::False,
+                                                                .depthBiasSlopeFactor = 1.0f,
+                                                                .lineWidth = 1.0f};
+            vk::PipelineMultisampleStateCreateInfo multisampling {.rasterizationSamples = vk::SampleCountFlagBits::e1,
+                                                                  .sampleShadingEnable = vk::False};
+            vk::PipelineColorBlendAttachmentState colorBlendAttachment {.blendEnable = vk::False,
+                                                                        .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
+            vk::PipelineColorBlendStateCreateInfo colorBlending {.logicOpEnable = vk::False,
+                                                                 .logicOp = vk::LogicOp::eCopy,
+                                                                 .attachmentCount = 1,
+                                                                 .pAttachments = &colorBlendAttachment};
+            // Dynamic states
+            std::vector dynamicStates = {
+                vk::DynamicState::eViewport,
+                vk::DynamicState::eScissor
+            };
+
+            vk::PipelineDynamicStateCreateInfo dynamicState{.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()),
+                                                            .pDynamicStates = dynamicStates.data()};
+
+            // Pipeline layout (textures eventually?)
+            vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
+
+            pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
+
+            // Finally make the pipeline
+            vk::PipelineRenderingCreateInfo pipelineRenderingCreateInfo {.colorAttachmentCount = 1,
+                                                                         .pColorAttachmentFormats = &swapChainSurfaceFormat.format};
+
+            vk::GraphicsPipelineCreateInfo pipelineInfo {.pNext = &pipelineRenderingCreateInfo,
+                                                         .stageCount = 2,
+                                                         .pStages = shaderStages,
+                                                         .pVertexInputState = &vertexInputInfo,
+                                                         .pInputAssemblyState = &inputAssembly,
+                                                         .pViewportState = &viewportState,
+                                                         .pRasterizationState = &rasterizer,
+                                                         .pMultisampleState = &multisampling,
+                                                         .pColorBlendState = &colorBlending,
+                                                         .pDynamicState = &dynamicState,
+                                                         .layout = pipelineLayout,
+                                                         .renderPass = nullptr};
+
+            graphicsPipeline = vk::raii::Pipeline{device, nullptr, pipelineInfo};
+        }
+
+        [[nodiscard]] vk::raii::ShaderModule createShaderModule(const std::vector<char>& code) const
+        {
+            vk::ShaderModuleCreateInfo createInfo {.codeSize = code.size() *sizeof(char),
+                                                   .pCode = reinterpret_cast<const uint32_t*>(code.data())};
+            
+            vk::raii::ShaderModule shaderModule{device, createInfo};
+
+            return shaderModule;
         }
 };
 
