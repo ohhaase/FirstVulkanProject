@@ -45,19 +45,16 @@ target_link_libraries (${PROJECT_NAME} Vulkan::Vulkan)
 # GLFW
 include(FetchContent)
 
-set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-
 FetchContent_Declare(glfw
     GIT_REPOSITORY https://github.com/glfw/glfw
     GIT_TAG 3.3.9
 )
 
-FetchContent_GetProperties(glfw)
-if(NOT glfw_POPULATED)
-    FetchContent_MakeAvailable(glfw)
-endif()
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(glfw)
 
 target_link_libraries(${PROJECT_NAME} glfw)
 
@@ -68,10 +65,8 @@ FetchContent_Declare(
 	GIT_TAG 	8d1fd52e5ab5590e2c81768ace50c72bae28f2ed #refs/tags/1.0.1
 )
 
-FetchContent_GetProperties(glm)
-if(NOT glm_POPULATED)
-    FetchContent_MakeAvailable(glm)
-endif()
+FetchContent_MakeAvailable(glm)
+
 
 target_link_libraries(${PROJECT_NAME} glm::glm)
 
