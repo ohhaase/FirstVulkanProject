@@ -95,7 +95,8 @@ endfunction()
 add_slang_shader_target(shaders SOURCES shader.slang)
 add_dependencies(${PROJECT_NAME} shaders)
 
-# Define shaders root so the program knows where to find them
+# Define roots so the program knows where to find things
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     SHADER_DIR="${CMAKE_SOURCE_DIR}/shaders/"
+    TEXTURE_DIR="${CMAKE_SOURCE_DIR}/textures/"
 )
