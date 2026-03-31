@@ -404,13 +404,31 @@ class HelloTriangleApplication
                 throw std::runtime_error("Failed to find GPUs with Vulkan support!");
             }
 
+            // Loop through and find suitable device
+            // TODO: SCORE GPUs TO CHOOSE BEST ONE
+            bool foundDevice = false;
+            std::cout << "Found devices: \n";
             for (const auto& thisDevice : physicalDevices)
             {
+                std::cout << thisDevice.getProperties().deviceName << "\n";
+
                 if (isDeviceSuitable(thisDevice))
                 {
                     physicalDevice = thisDevice;
+                    foundDevice = true;
                     break;
                 }              
+            }
+
+            if (foundDevice)
+            {
+                std::cout << "Chose device: " << physicalDevice.getProperties().deviceName << "\n";
+            }
+
+            // If we got to this point, we didn't find a gpu we're happy with
+            if (!foundDevice)
+            {
+                throw std::runtime_error("Failed to find suitable GPU!");
             }
         }
 
@@ -425,7 +443,7 @@ class HelloTriangleApplication
             std::vector<vk::ExtensionProperties> availableDeviceExtensions = thisDevice.enumerateDeviceExtensionProperties();
 
             // Check for dedicated GPU
-            bool isDedicatedGPU = deviceProperties.deviceType == vk::PhysicalDeviceType::eDiscreteGpu; //This one I chose to do myself :)
+            // bool isDedicatedGPU = deviceProperties.deviceType == vk::PhysicalDeviceType::eDiscreteGpu; //This one I chose to do myself :) <-- YOU MORON IT DOESNT WORK ON MAC
 
             // Supports our version of Vulkan
             bool supportsVulkan1_3 = deviceProperties.apiVersion >= vk::ApiVersion13;
@@ -447,7 +465,7 @@ class HelloTriangleApplication
 
             bool supportsAnisotropy = thisDevice.getFeatures().samplerAnisotropy;
 
-            return isDedicatedGPU && supportsVulkan1_3 && supportsGraphics && supportsAllRequiredExtensions;
+            return supportsVulkan1_3 && supportsGraphics && supportsAllRequiredExtensions; 
         }
 
         void createLogicalDevice()
