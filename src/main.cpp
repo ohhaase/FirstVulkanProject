@@ -17,10 +17,12 @@
 #include <fstream>
 #include <array>
 #include <chrono>
+#include <random>
 
 constexpr uint32_t WIDTH = 800;
 constexpr uint32_t HEIGHT = 600;
 constexpr int MAX_FRAMES_IN_FLIGHT = 2;
+constexpr uint32_t PARTICLE_COUNT = 8192;
 
 const std::vector<char const*> validationLayers = {
     "VK_LAYER_KHRONOS_validation"
@@ -56,47 +58,29 @@ static std::vector<char> readFile(const std::string& filename)
     return buffer;
 }
 
-// Vertex structs
-struct Vertex
+struct UniformBufferObject
 {
-    glm::vec2 pos;
-    glm::vec3 color;
-    glm::vec2 texCoord;
+    float deltaTime = 1.0f;
+};
+
+// Particle struct
+struct Particle
+{
+    glm::vec2 position;
+    glm::vec2 velocity;
+    glm::vec4 color;
 
     static vk::VertexInputBindingDescription getBindingDescription()
     {
-        return {0, sizeof(Vertex), vk::VertexInputRate::eVertex};
+        return {0, sizeof(Particle), vk::VertexInputRate::eVertex};
     }
 
-    static std::array<vk::VertexInputAttributeDescription, 3> getAttributeDescriptions()
+    static std::array<vk::VertexInputAttributeDescription, 2> getAttributeDescriptions()
     {
-        return {vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, pos)),
-                vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, color)),
-                vk::VertexInputAttributeDescription(2, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, texCoord))};
+        return {vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32Sfloat, offsetof(Particle, position)),
+                vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32B32A32Sfloat, offsetof(Particle, color))};
     }
 };
-
-struct UniformBufferObject
-{
-    alignas(16) glm::mat4 model;
-    alignas(16) glm::mat4 view;
-    alignas(16) glm::mat4 proj;
-};
-
-// Vertex buffer
-const std::vector<Vertex> vertices = {
-    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}}, // Top left
-    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}}, // Top right
-    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}}, // Bottom right
-    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}} // Bottom left
-};
-
-// Index buffer
-const std::vector<uint16_t> indices = {
-    0, 1, 2, 2, 3, 0
-};
-
-
 
 class HelloTriangleApplication
 {
@@ -144,10 +128,10 @@ class HelloTriangleApplication
 
         // Descriptor pool and sets
         vk::raii::DescriptorPool descriptorPool = nullptr;
-        std::vector<vk::raii::DescriptorSet> descriptorSets;
+        std::vector<vk::raii::DescriptorSet> computeDescriptorSets;
 
         // Descriptor layout (uniforms)
-        vk::raii::DescriptorSetLayout descriptorSetLayout = nullptr;
+        vk::raii::DescriptorSetLayout computeDescriptorSetLayout = nullptr;
 
         // Pipeline layout (textures eventually?)
         vk::raii::PipelineLayout pipelineLayout = nullptr;
@@ -165,8 +149,8 @@ class HelloTriangleApplication
         std::vector<vk::raii::CommandBuffer> commandBuffers;
 
         // Synchronization objects
-        std::vector<vk::raii::Semaphore> presentCompleteSemaphores;
-        std::vector<vk::raii::Semaphore> renderFinishedSemaphores;
+        vk::raii::Semaphore semaphore = nullptr;
+        uint64_t timelineValue = 0;
         std::vector<vk::raii::Fence> inFlightFences;
 
         // Frame index
@@ -175,24 +159,22 @@ class HelloTriangleApplication
         // Check for resizing
         bool frameBufferResized = false;
 
-        // Vertex buffer
-        vk::raii::Buffer vertexBuffer = nullptr;
-        vk::raii::DeviceMemory vertexBufferMemory = nullptr; // They recommend combining these two buffers eventually, saving on memory access and stuff?
-
-        // Index buffer
-        vk::raii::Buffer indexBuffer = nullptr;
-        vk::raii::DeviceMemory indexBufferMemory = nullptr;
-
         // Uniform buffer (one for each frame in flight)
         std::vector<vk::raii::Buffer> uniformBuffers;
         std::vector<vk::raii::DeviceMemory> uniformBuffersMemory;
         std::vector<void*> uniformBuffersMapped;
 
-        // Images things
-        vk::raii::Image textureImage = nullptr;
-        vk::raii::DeviceMemory textureImageMemory = nullptr;
-        vk::raii::ImageView textureImageView = nullptr;
-        vk::raii::Sampler textureSampler = nullptr;
+        // Compute shader things
+        std::vector<vk::raii::Buffer> shaderStorageBuffers;
+        std::vector<vk::raii::DeviceMemory> shaderStorageBuffersMemory;
+
+        vk::raii::PipelineLayout computePipelineLayout = nullptr;
+        vk::raii::Pipeline computePipeline = nullptr;
+
+        std::vector<vk::raii::CommandBuffer> computeCommandBuffers;
+
+        double lastFrameTime = 0.0;
+        double lastTime = 0.0;
 
         void initWindow()
         {
@@ -201,11 +183,14 @@ class HelloTriangleApplication
 
             // Tell GLFW to not use OpenGL
             glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+            glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
             // Create window
             window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
             glfwSetWindowUserPointer(window, this);
             glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
+
+            lastTime = glfwGetTime();
         }
 
         void initVulkan()
@@ -213,22 +198,28 @@ class HelloTriangleApplication
             createInstance();
             setupDebugMessenger();
             createSurface();
+
             pickPhysicalDevice(); // Will eventually be able to choose multiple? Applications to HPC?
             createLogicalDevice();
+
             createSwapChain();
             createImageViews();
+
             createDescriptorSetLayout();
+
             createGraphicsPipeline();
+            createComputePipeline();
+
             createCommandPool();
-            createTextureImage();
-            createTextureImageView();
-            createTextureSampler();
-            createVertexBuffer();
-            createIndexBuffer();
+            createShaderStorageBuffers();
             createUniformBuffers();
+
             createDescriptorPool();
             createDescriptorSets();
+
             createCommandBuffers();
+            createComputeCommandBuffers();
+
             createSyncObjects();
         }
 
@@ -239,6 +230,10 @@ class HelloTriangleApplication
             {
                 glfwPollEvents();
                 drawFrame();
+
+                double currentTime = glfwGetTime();
+                lastFrameTime = (currentTime - lastTime) * 1000.0;
+                lastTime = currentTime;
             }
 
             device.waitIdle();
@@ -451,6 +446,9 @@ class HelloTriangleApplication
             // Supports graphics commands
             bool supportsGraphics = std::ranges::any_of(queueFamilies, [](auto const &qfp) {return !!(qfp.queueFlags & vk::QueueFlagBits::eGraphics); });
 
+            // Supports compute
+            bool supportsCompute = std::ranges::any_of(queueFamilies, [](auto const &qfp) {return !!(qfp.queueFlags & vk::QueueFlagBits::eCompute); });
+
             bool supportsAllRequiredExtensions = std::ranges::all_of(requiredDeviceExtension, 
                                                                      [&availableDeviceExtensions](auto const& requiredDeviceExtension) {
                                                                         return std::ranges::any_of(availableDeviceExtensions,
@@ -460,12 +458,14 @@ class HelloTriangleApplication
                                                                      });
                                                                     
             // Feature check
-            auto features = thisDevice.template getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
-            bool supportsRequiredFeatures = features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering && features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
+            auto features = thisDevice.template getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT, vk::PhysicalDeviceTimelineSemaphoreFeaturesKHR>();
+            bool supportsRequiredFeatures = features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering && 
+                                            features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState &&
+                                            features.template get<vk::PhysicalDeviceTimelineSemaphoreFeaturesKHR>().timelineSemaphore;
 
             bool supportsAnisotropy = thisDevice.getFeatures().samplerAnisotropy;
 
-            return supportsVulkan1_3 && supportsGraphics && supportsAllRequiredExtensions; 
+            return supportsVulkan1_3 && supportsGraphics && supportsAllRequiredExtensions && supportsCompute; 
         }
 
         void createLogicalDevice()
@@ -476,7 +476,7 @@ class HelloTriangleApplication
             // Find first index that supports graphics + present
             for (uint32_t qfpIndex = 0; qfpIndex < queueFamilyProperties.size(); qfpIndex++)
             {
-                if ((queueFamilyProperties[qfpIndex].queueFlags & vk::QueueFlagBits::eGraphics) && physicalDevice.getSurfaceSupportKHR(qfpIndex, *surface))
+                if ((queueFamilyProperties[qfpIndex].queueFlags & vk::QueueFlagBits::eGraphics) && physicalDevice.getSurfaceSupportKHR(qfpIndex, *surface) && (queueFamilyProperties[qfpIndex].queueFlags & vk::QueueFlagBits::eCompute))
                 {
                     queueIndex = qfpIndex;
                     break;
@@ -492,10 +492,12 @@ class HelloTriangleApplication
             // Chain of physical device features to make sure theyre vailable
             vk::StructureChain<vk::PhysicalDeviceFeatures2, 
                                vk::PhysicalDeviceVulkan13Features, 
-                               vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT> featureChain = {
+                               vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
+                               vk::PhysicalDeviceTimelineSemaphoreFeaturesKHR> featureChain = {
                                     {.features = {.samplerAnisotropy = true}}, 
                                     {.synchronization2 = true, .dynamicRendering = true},
-                                    {.extendedDynamicState = true}
+                                    {.extendedDynamicState = true},
+                                    {.timelineSemaphore = true}
                                };
 
             // Create device
@@ -645,15 +647,15 @@ class HelloTriangleApplication
             vk::PipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
             // Fixed parts of the graphics pipeline
-            auto bindingDescription = Vertex::getBindingDescription();
-            auto attributeDescriptions = Vertex::getAttributeDescriptions();
+            auto bindingDescription = Particle::getBindingDescription();
+            auto attributeDescriptions = Particle::getAttributeDescriptions();
 
             vk::PipelineVertexInputStateCreateInfo vertexInputInfo = {.vertexBindingDescriptionCount = 1,
                                                                       .pVertexBindingDescriptions = &bindingDescription,
                                                                       .vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
                                                                       .pVertexAttributeDescriptions = attributeDescriptions.data()};
 
-            vk::PipelineInputAssemblyStateCreateInfo inputAssembly {.topology = vk::PrimitiveTopology::eTriangleList};
+            vk::PipelineInputAssemblyStateCreateInfo inputAssembly {.topology = vk::PrimitiveTopology::ePointList, .primitiveRestartEnable = vk::False};
             vk::PipelineViewportStateCreateInfo viewportState{.viewportCount = 1, .scissorCount = 1};
             vk::PipelineRasterizationStateCreateInfo rasterizer{.depthClampEnable = vk::False,
                                                                 .rasterizerDiscardEnable = vk::False,
@@ -681,9 +683,7 @@ class HelloTriangleApplication
                                                             .pDynamicStates = dynamicStates.data()};
 
             // Pipeline layout (textures eventually?)
-            vk::PipelineLayoutCreateInfo pipelineLayoutInfo{.setLayoutCount = 1,
-                                                            .pSetLayouts = &*descriptorSetLayout,
-                                                            .pushConstantRangeCount = 0};
+            vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
 
             pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
 
@@ -739,6 +739,7 @@ class HelloTriangleApplication
         void recordCommandBuffer(uint32_t imageIndex)
         {
             vk::raii::CommandBuffer& commandBuffer = commandBuffers[frameIndex];
+            commandBuffer.reset();
             commandBuffer.begin({});
 
             // Before starting rendering, transition swapchain image
@@ -767,16 +768,13 @@ class HelloTriangleApplication
 
             commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
 
-            commandBuffer.bindVertexBuffers(0, *vertexBuffer, {0});
-            commandBuffer.bindIndexBuffer(*indexBuffer, 0, vk::IndexType::eUint16);
-
-            commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, *descriptorSets[frameIndex], nullptr);
-            
             commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
-
+            
             commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
 
-            commandBuffer.drawIndexed(indices.size(), 1, 0, 0, 0);
+            commandBuffer.bindVertexBuffers(0, {*shaderStorageBuffers[frameIndex]}, {0});
+
+            commandBuffer.draw(PARTICLE_COUNT, 1, 0, 0);
 
             commandBuffer.endRendering();
 
@@ -823,16 +821,15 @@ class HelloTriangleApplication
         }
 
         void drawFrame()
-        {
+        {            
+            auto [result, imageIndex] = swapChain.acquireNextImage(UINT64_MAX, nullptr, *inFlightFences[frameIndex]);
             vk::Result fenceResult = device.waitForFences(*inFlightFences[frameIndex], vk::True, UINT64_MAX);
 
             if (fenceResult != vk::Result::eSuccess)
             {
                 throw std::runtime_error("Failed to wait for fence!");
             }
-
-            auto [result, imageIndex] = swapChain.acquireNextImage(UINT64_MAX, *presentCompleteSemaphores[frameIndex], nullptr);
-
+            
             if (result == vk::Result::eErrorOutOfDateKHR)
             {
                 recreateSwapChain();
@@ -847,39 +844,89 @@ class HelloTriangleApplication
             // Only reset fence if above passes
             device.resetFences(*inFlightFences[frameIndex]);
 
-            commandBuffers[frameIndex].reset();
-            recordCommandBuffer(imageIndex);
-
-            vk::PipelineStageFlags waitDestinationStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
+            // Update timeline value for this frame
+            uint64_t computeWaitValue = timelineValue;
+            uint64_t computeSignalValue = ++timelineValue;
+            uint64_t graphicsWaitValue = computeSignalValue;
+            uint64_t graphicsSignalValue = ++timelineValue;
 
             updateUniformBuffer(frameIndex);
 
-            const vk::SubmitInfo submitInfo{.waitSemaphoreCount = 1,
-                                            .pWaitSemaphores = &*presentCompleteSemaphores[frameIndex],
-                                            .pWaitDstStageMask = &waitDestinationStageMask,
-                                            .commandBufferCount = 1,
-                                            .pCommandBuffers = &*commandBuffers[frameIndex],
-                                            .signalSemaphoreCount = 1,
-                                            .pSignalSemaphores = &*renderFinishedSemaphores[imageIndex]};
-                                    
-            queue.submit(submitInfo, *inFlightFences[frameIndex]);
+            {// Needs to be in braces for some reason?
+                recordComputeCommandBuffer();
 
-            const vk::PresentInfoKHR presentInfoKHR{.waitSemaphoreCount = 1,
-                                                    .pWaitSemaphores = &*renderFinishedSemaphores[imageIndex],
-                                                    .swapchainCount = 1,
-                                                    .pSwapchains = &*swapChain,
-                                                    .pImageIndices = &imageIndex};
+                //Submit compute work
+                vk::TimelineSemaphoreSubmitInfo computeTimelineInfo{.waitSemaphoreValueCount = 1,
+                                                                    .pWaitSemaphoreValues = &computeWaitValue,
+                                                                    .signalSemaphoreValueCount = 1,
+                                                                    .pSignalSemaphoreValues = &computeSignalValue};
 
-            result = queue.presentKHR(presentInfoKHR);
+                vk::PipelineStageFlags waitStages[] = {vk::PipelineStageFlagBits::eComputeShader};
 
-            if ((result == vk::Result::eSuboptimalKHR) || (result == vk::Result::eErrorOutOfDateKHR) || frameBufferResized)
-            {
-                frameBufferResized = false;
-                recreateSwapChain();
+                vk::SubmitInfo computeSubmitInfo{.pNext = &computeTimelineInfo,
+                                                 .waitSemaphoreCount = 1,
+                                                 .pWaitSemaphores = &*semaphore,
+                                                 .pWaitDstStageMask = waitStages,
+                                                 .commandBufferCount = 1,
+                                                 .pCommandBuffers = &*computeCommandBuffers[frameIndex],
+                                                 .signalSemaphoreCount = 1,
+                                                 .pSignalSemaphores = &*semaphore};
+
+                queue.submit(computeSubmitInfo, nullptr);
             }
-            else
+
             {
-                assert(result == vk::Result::eSuccess);
+                // Record graphics command bufffer
+                recordCommandBuffer(imageIndex);
+
+                // Submit graphics work (after waiting on compute)
+                vk::PipelineStageFlags waitStage = vk::PipelineStageFlagBits::eVertexInput;
+
+                vk::TimelineSemaphoreSubmitInfo graphicsTimelineInfo{.waitSemaphoreValueCount = 1,
+                                                                     .pWaitSemaphoreValues = &graphicsWaitValue,
+                                                                     .signalSemaphoreValueCount = 1,
+                                                                     .pSignalSemaphoreValues = &graphicsSignalValue};
+
+                vk::SubmitInfo graphicsSubmitInfo{.pNext = &graphicsTimelineInfo,
+                                                  .waitSemaphoreCount = 1,
+                                                  .pWaitSemaphores = &*semaphore,
+                                                  .pWaitDstStageMask = &waitStage,
+                                                  .commandBufferCount = 1,
+                                                  .pCommandBuffers = &*commandBuffers[frameIndex],
+                                                  .signalSemaphoreCount = 1,
+                                                  .pSignalSemaphores = &*semaphore};
+
+                queue.submit(graphicsSubmitInfo, nullptr);
+
+                // Present image (after waiting for graphics)
+                vk::SemaphoreWaitInfo waitInfo{.semaphoreCount = 1,
+                                               .pSemaphores = &*semaphore,
+                                               .pValues = &graphicsSignalValue};
+
+                vk::Result result = device.waitSemaphores(waitInfo, UINT64_MAX);
+                if (result != vk::Result::eSuccess)
+                {
+                    throw std::runtime_error("Failed to wait for semaphore!");
+                }
+
+                vk::PresentInfoKHR presentInfo{.waitSemaphoreCount = 0,
+                                               .pWaitSemaphores = nullptr,
+                                               .swapchainCount = 1,
+                                               .pSwapchains = &*swapChain,
+                                               .pImageIndices = &imageIndex};
+
+                result = queue.presentKHR(presentInfo);
+
+                // Due to VULKAN_HPP_HANDLE_ERROR_OUT_DATE_AS_SUCCESS being defined, we can check to see if the screen gets resized here
+                if ((result == vk::Result::eSuboptimalKHR) || (result == vk::Result::eErrorOutOfDateKHR) || frameBufferResized)
+                {
+                    frameBufferResized = false;
+                    recreateSwapChain();
+                }
+                else
+                {
+                    assert(result == vk::Result::eSuccess);
+                }
             }
 
             frameIndex = (frameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
@@ -887,17 +934,15 @@ class HelloTriangleApplication
 
         void createSyncObjects()
         {
-            assert(presentCompleteSemaphores.empty() && renderFinishedSemaphores.empty() && inFlightFences.empty());
+            inFlightFences.clear();
 
-            for (size_t i = 0; i < swapChainImages.size(); i++)
-            {
-                renderFinishedSemaphores.emplace_back(device, vk::SemaphoreCreateInfo{});
-            }
+            vk::SemaphoreTypeCreateInfo semaphoreType{.semaphoreType = vk::SemaphoreType::eTimeline, .initialValue = 0};
+            semaphore = vk::raii::Semaphore(device, {.pNext = &semaphoreType});
+            timelineValue = 0;
 
             for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
             {
-                presentCompleteSemaphores.emplace_back(device, vk::SemaphoreCreateInfo{});
-                inFlightFences.emplace_back(device, vk::FenceCreateInfo{.flags = vk::FenceCreateFlagBits::eSignaled});
+                inFlightFences.emplace_back(device, vk::FenceCreateInfo{});
             }
         }
 
@@ -931,27 +976,6 @@ class HelloTriangleApplication
         {
             auto app = reinterpret_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window));
             app->frameBufferResized = true;
-        }
-
-        void createVertexBuffer()
-        {
-            vk::DeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
-
-            // Temporary device buffer
-            vk::raii::Buffer stagingBuffer = nullptr;
-            vk::raii::DeviceMemory stagingBufferMemory = nullptr;
-            createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
-
-            // Fill staging buffer
-            void* dataStaging = stagingBufferMemory.mapMemory(0, bufferSize);
-            memcpy(dataStaging, vertices.data(), bufferSize);
-            stagingBufferMemory.unmapMemory();
-
-            // Vertex buffer on device memory
-            createBuffer(bufferSize, vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal, vertexBuffer, vertexBufferMemory);
-
-            // Copy from staging buffer to vertex buffer (on GPU)
-            copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
         }
 
         void createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory)
@@ -1025,37 +1049,17 @@ class HelloTriangleApplication
             queue.waitIdle();
         }
 
-        void createIndexBuffer()
-        {
-            vk::DeviceSize bufferSize = sizeof(indices[0]) * indices.size();
-
-            // Staging buffer
-            vk::raii::Buffer stagingBuffer = nullptr;
-            vk::raii::DeviceMemory stagingBufferMemory = nullptr;
-            createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
-
-            // Fill staging buffer
-            void* dataStaging = stagingBufferMemory.mapMemory(0, bufferSize);
-            memcpy(dataStaging, indices.data(), (size_t)bufferSize);
-            stagingBufferMemory.unmapMemory();
-
-            // Index buffer on device memory
-            createBuffer(bufferSize, vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal, indexBuffer, indexBufferMemory);
-
-            // Copy from staging buffer to index buffer (on GPU)
-            copyBuffer(stagingBuffer, indexBuffer, bufferSize);
-        }
-
         void createDescriptorSetLayout()
         {
             std::vector<vk::DescriptorSetLayoutBinding> bindings = {
-                vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr), // uboLayoutBinding
-                vk::DescriptorSetLayoutBinding(1, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr) // combine image sampler
+                vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eCompute, nullptr), // uboLayoutBinding
+                vk::DescriptorSetLayoutBinding(1, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute, nullptr), // Compute shader storage buffer 1
+                vk::DescriptorSetLayoutBinding(2, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute, nullptr) // Compute shader storage buffer 2
             };
 
             vk::DescriptorSetLayoutCreateInfo layoutInfo{.bindingCount = static_cast<uint32_t>(bindings.size()), .pBindings = bindings.data()};
 
-            descriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
+            computeDescriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
         }
 
         void createUniformBuffers()
@@ -1078,19 +1082,9 @@ class HelloTriangleApplication
 
         void updateUniformBuffer(uint32_t currentImage)
         {
-            static auto startTime = std::chrono::high_resolution_clock::now();
-
-            auto currentTime = std::chrono::high_resolution_clock::now();
-            float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
-
             UniformBufferObject ubo{};
 
-            ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-
-            ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-
-            ubo.proj = glm::perspective(glm::radians(45.0f), static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height), 0.1f, 10.0f);
-            ubo.proj[1][1] *= -1; // because openGl has inverted y clip coord compared to vulkan
+            ubo.deltaTime = static_cast<float>(lastFrameTime) * 2.0f;
 
             memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
         }
@@ -1099,7 +1093,7 @@ class HelloTriangleApplication
         {
             std::vector<vk::DescriptorPoolSize> poolSizes{
                 vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer, MAX_FRAMES_IN_FLIGHT), //ubo
-                vk::DescriptorPoolSize(vk::DescriptorType::eCombinedImageSampler, MAX_FRAMES_IN_FLIGHT) // combined image sampler
+                vk::DescriptorPoolSize(vk::DescriptorType::eStorageBuffer, MAX_FRAMES_IN_FLIGHT*2) // shader storage buffer object
             };
             
             vk::DescriptorPoolCreateInfo poolInfo{.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, 
@@ -1112,13 +1106,13 @@ class HelloTriangleApplication
 
         void createDescriptorSets()
         {
-            std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *descriptorSetLayout);
-            vk::DescriptorSetAllocateInfo allocInfo{.descriptorPool = descriptorPool,
-                                                    .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
+            std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, computeDescriptorSetLayout);
+            vk::DescriptorSetAllocateInfo allocInfo{.descriptorPool = *descriptorPool,
+                                                    .descriptorSetCount = MAX_FRAMES_IN_FLIGHT,
                                                     .pSetLayouts = layouts.data()};
             
-            descriptorSets.clear();
-            descriptorSets = device.allocateDescriptorSets(allocInfo);
+            computeDescriptorSets.clear();
+            computeDescriptorSets = device.allocateDescriptorSets(allocInfo);
 
             for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
             {
@@ -1126,67 +1120,39 @@ class HelloTriangleApplication
                                                     .offset = 0,
                                                     .range = sizeof(UniformBufferObject)};
                 
-                vk::WriteDescriptorSet uboDescriptorWrite{.dstSet = descriptorSets[i],
+                vk::WriteDescriptorSet uboDescriptorWrite{.dstSet = *computeDescriptorSets[i],
                                                           .dstBinding = 0,
                                                           .dstArrayElement = 0,
                                                           .descriptorCount = 1,
                                                           .descriptorType = vk::DescriptorType::eUniformBuffer,
                                                           .pBufferInfo = &bufferInfo};
 
-                vk::DescriptorImageInfo imageInfo{.sampler = textureSampler,
-                                                  .imageView = textureImageView,
-                                                  .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
+                vk::DescriptorBufferInfo storageBufferInfoLastFrame{.buffer = shaderStorageBuffers[(i-1) % MAX_FRAMES_IN_FLIGHT],
+                                                                    .offset = 0,
+                                                                    .range = sizeof(Particle)*PARTICLE_COUNT};
 
-                vk::WriteDescriptorSet imageDescriptorWrite{.dstSet = descriptorSets[i],
-                                                            .dstBinding = 1,
-                                                            .dstArrayElement = 0,
-                                                            .descriptorCount = 1,
-                                                            .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-                                                            .pImageInfo = &imageInfo};
+                vk::DescriptorBufferInfo storageBufferInfoCurrentFrame{.buffer = shaderStorageBuffers[i],
+                                                                       .offset = 0,
+                                                                       .range = sizeof(Particle)*PARTICLE_COUNT};
 
-                std::vector<vk::WriteDescriptorSet> descriptorWrites = {uboDescriptorWrite, imageDescriptorWrite};
+                vk::WriteDescriptorSet storageBufferLastFrameDescriptorWrite{.dstSet = *computeDescriptorSets[i],
+                                                                             .dstBinding = 1,
+                                                                             .dstArrayElement = 0,
+                                                                             .descriptorCount = 1,
+                                                                             .descriptorType = vk::DescriptorType::eStorageBuffer,
+                                                                             .pBufferInfo = &storageBufferInfoLastFrame};
+
+                vk::WriteDescriptorSet storageBufferCurrentFrameDescriptorWrite{.dstSet = *computeDescriptorSets[i],
+                                                                                .dstBinding = 2,
+                                                                                .dstArrayElement = 0,
+                                                                                .descriptorCount = 1,
+                                                                                .descriptorType = vk::DescriptorType::eStorageBuffer,
+                                                                                .pBufferInfo = &storageBufferInfoCurrentFrame};
+
+                std::vector<vk::WriteDescriptorSet> descriptorWrites = {uboDescriptorWrite, storageBufferLastFrameDescriptorWrite, storageBufferCurrentFrameDescriptorWrite};
 
                 device.updateDescriptorSets(descriptorWrites, {});
             }
-        }
-
-        void createTextureImage()
-        {
-            // Read image
-            int texWidth, texHeight, texChannels;
-
-            stbi_uc* pixels = stbi_load((std::string(TEXTURE_DIR) + "texture.JPEG").data(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
-
-            vk::DeviceSize imageSize = texWidth * texHeight * 4; //4 because rgba?
-
-            if (!pixels)
-            {
-                throw std::runtime_error("Failed to load texture image!");
-            }
-
-            // Staging buffer
-            vk::raii::Buffer stagingBuffer({});
-            vk::raii::DeviceMemory stagingBufferMemory({});
-
-            createBuffer(imageSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
-
-            void* data = stagingBufferMemory.mapMemory(0, imageSize);
-            memcpy(data, pixels, imageSize);
-            stagingBufferMemory.unmapMemory();
-
-            stbi_image_free(pixels);
-
-            // Create image
-            createImage(texWidth, texHeight, vk::Format::eR8G8B8A8Srgb, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled, 
-                        vk::MemoryPropertyFlagBits::eDeviceLocal, textureImage, textureImageMemory);
-
-            // Copy staging buffer to texture image
-            transitionImageLayout(textureImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
-            copyBufferToImage(stagingBuffer, textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
-
-            // Prepare for shader access
-            transitionImageLayout(textureImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-
         }
 
         void createImage(uint32_t width, uint32_t height, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory)
@@ -1266,11 +1232,6 @@ class HelloTriangleApplication
             endSingleTimeCommands(commandBuffer);
         }
 
-        void createTextureImageView()
-        {
-            textureImageView = createImageView(textureImage, vk::Format::eR8G8B8A8Srgb);
-        }
-
         vk::raii::ImageView createImageView(vk::raii::Image& image, vk::Format format)
         {
             vk::ImageViewCreateInfo imageViewCreateInfo{.image = image,
@@ -1281,27 +1242,93 @@ class HelloTriangleApplication
             return vk::raii::ImageView(device, imageViewCreateInfo);
         }
 
-        void createTextureSampler()
+        void createShaderStorageBuffers()
         {
-            vk::PhysicalDeviceProperties properties = physicalDevice.getProperties();
+            // Initialize particles
+            std::default_random_engine rndEngine((unsigned) time(nullptr));
+            std::uniform_real_distribution<float> rndDist(0.0f, 1.0f);
 
-            vk::SamplerCreateInfo samplerInfo{.magFilter = vk::Filter::eLinear,
-                                              .minFilter = vk::Filter::eLinear,
-                                              .mipmapMode = vk::SamplerMipmapMode::eLinear,
-                                              .addressModeU = vk::SamplerAddressMode::eRepeat,
-                                              .addressModeV = vk::SamplerAddressMode::eRepeat,
-                                              .addressModeW = vk::SamplerAddressMode::eRepeat,
-                                              .mipLodBias = 0.0f,
-                                              .anisotropyEnable = vk::True,
-                                              .maxAnisotropy = properties.limits.maxSamplerAnisotropy,
-                                              .compareEnable = vk::False,
-                                              .compareOp = vk::CompareOp::eAlways,
-                                              .minLod = 0.0f,
-                                              .maxLod = 0.0f,
-                                              .borderColor = vk::BorderColor::eIntOpaqueBlack,
-                                              .unnormalizedCoordinates = vk::False};
+            // Initial particle positions on circle
+            std::vector<Particle> particles(PARTICLE_COUNT);
+            for (auto& particle : particles)
+            {
+                float r = 0.25f * sqrtf(rndDist(rndEngine));
+                float theta = rndDist(rndEngine) * 2.0f * 3.1415f;
+                float x = r * cosf(theta) * HEIGHT/WIDTH;
+                float y = r * sinf(theta);
+                particle.position = glm::vec2(x, y);
+                particle.velocity = normalize(glm::vec2(x, y)) * 0.00025f;
+                particle.color = glm::vec4(rndDist(rndEngine), rndDist(rndEngine), rndDist(rndEngine), 1.0f);
+            }
 
-            textureSampler = vk::raii::Sampler(device, samplerInfo);
+            vk::DeviceSize bufferSize = sizeof(Particle) * PARTICLE_COUNT;
+
+            // Create staging buffer to hold data on host side
+            vk::raii::Buffer stagingBuffer({});
+            vk::raii::DeviceMemory stagingBufferMemory({});
+            createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
+
+            void* dataStaging = stagingBufferMemory.mapMemory(0, bufferSize);
+            memcpy(dataStaging, particles.data(), (size_t)bufferSize);
+            stagingBufferMemory.unmapMemory();
+
+            shaderStorageBuffers.clear();
+            shaderStorageBuffersMemory.clear();
+
+            // Copy initial particle data to all storage buffers
+            for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+            {
+                vk::raii::Buffer shaderStorageBufferTemp({});
+                vk::raii::DeviceMemory shaderStorageBufferTempMemory({});
+                createBuffer(bufferSize, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal, shaderStorageBufferTemp, shaderStorageBufferTempMemory);
+                copyBuffer(stagingBuffer, shaderStorageBufferTemp, bufferSize);
+                shaderStorageBuffers.emplace_back(std::move(shaderStorageBufferTemp));
+                shaderStorageBuffersMemory.emplace_back(std::move(shaderStorageBufferTempMemory));
+            }
+        }
+
+        void createComputePipeline()
+        {
+            vk::raii::ShaderModule shaderModule = createShaderModule(readFile(std::string(SHADER_DIR) + "slang.spv"));
+
+            vk::PipelineShaderStageCreateInfo compShaderStageInfo{.stage = vk::ShaderStageFlagBits::eCompute,
+                                                                  .module = shaderModule,
+                                                                  .pName = "compMain"};
+
+            vk::PipelineLayoutCreateInfo pipelineLayoutInfo{.setLayoutCount = 1,
+                                                            .pSetLayouts = &*computeDescriptorSetLayout};
+
+            computePipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
+            
+            vk::ComputePipelineCreateInfo pipelineInfo{.stage = compShaderStageInfo,
+                                                       .layout = *computePipelineLayout};
+
+            computePipeline = vk::raii::Pipeline(device, nullptr, pipelineInfo);
+        }
+
+        void createComputeCommandBuffers()
+        {
+            computeCommandBuffers.clear();
+
+            vk::CommandBufferAllocateInfo allocInfo{.commandPool = *commandPool,
+                                                    .level = vk::CommandBufferLevel::ePrimary,
+                                                    .commandBufferCount = MAX_FRAMES_IN_FLIGHT};
+
+            computeCommandBuffers = vk::raii::CommandBuffers(device, allocInfo);
+        }
+
+        void recordComputeCommandBuffer()
+        {
+            vk::raii::CommandBuffer& commandBuffer = computeCommandBuffers[frameIndex];
+
+            commandBuffer.reset();
+            commandBuffer.begin({});
+
+            commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, computePipeline);
+            commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute, computePipelineLayout, 0, {computeDescriptorSets[frameIndex]}, {});
+            commandBuffer.dispatch(PARTICLE_COUNT / 256, 1, 1);
+
+            commandBuffer.end();
         }
 };
 
