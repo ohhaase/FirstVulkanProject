@@ -27,6 +27,11 @@ target_sources(${PROJECT_NAME} PRIVATE
     # ./src/
     src/main.cpp
 
+    # ./src/vulkan_backend/
+    src/vulkan_backend/VulkanApplication.cpp
+
+    # ./src/core/
+    src/core/file_functions.cpp
 )
 
 # Add include subdirectories
