@@ -29,6 +29,9 @@ target_sources(${PROJECT_NAME} PRIVATE
 
     # ./src/vulkan_backend/
     src/vulkan_backend/VulkanApplication.cpp
+    src/vulkan_backend/VKA_Frame.cpp
+    src/vulkan_backend/VKA_Swapchain.cpp
+    src/vulkan_backend/VKA_Images.cpp
 
     # ./src/core/
     src/core/file_functions.cpp

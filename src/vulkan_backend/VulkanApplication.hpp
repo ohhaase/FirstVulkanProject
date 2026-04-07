@@ -94,6 +94,12 @@ class VulkanApplication
         std::vector<vk::raii::DeviceMemory> uniformBuffersMemory;
         std::vector<void*> uniformBuffersMapped;
 
+        // Images things
+        vk::raii::Image textureImage = nullptr;
+        vk::raii::DeviceMemory textureImageMemory = nullptr;
+        vk::raii::ImageView textureImageView = nullptr;
+        vk::raii::Sampler textureSampler = nullptr;
+
         // Compute shader things
         std::vector<vk::raii::Buffer> shaderStorageBuffers;
         std::vector<vk::raii::DeviceMemory> shaderStorageBuffersMemory;
@@ -108,100 +114,72 @@ class VulkanApplication
 
         // Core functions
         void initWindow();
-
         void initVulkan();
-
-        void mainLoop();
-
         void cleanup();
-
         void createInstance();
-
         std::vector<const char*> getRequiredInstanceExtensions();
-
         void setupDebugMessenger();
-
         void createSurface();
-
-        void pickPhysicalDevice();
-
-        bool isDeviceSuitable(const vk::raii::PhysicalDevice& thisDevice);
-
-        void createLogicalDevice();
-
-        vk::SurfaceFormatKHR chooseSwapSurfaceFormat(std::vector<vk::SurfaceFormatKHR> const& availableFormats);
-
-        vk::PresentModeKHR chooseSwapPresentMode(std::vector<vk::PresentModeKHR> const& availablePresentModes);
-
-        vk::Extent2D chooseSwapExtent(vk::SurfaceCapabilitiesKHR const &capabilities);
-
-        uint32_t chooseSwapMinImageCount(vk::SurfaceCapabilitiesKHR const& surfaceCapabilities);
-
-        void createSwapChain();
-
-        void createImageViews();
-
-        void createGraphicsPipeline();
-
-        [[nodiscard]] vk::raii::ShaderModule createShaderModule(const std::vector<char>& code) const;
-
-        void createCommandPool();
-
-        void createCommandBuffers();
-
-        void recordCommandBuffer(uint32_t imageIndex);
-
-        void transition_image_layout(uint32_t imageIndex,
-                                     vk::ImageLayout oldLayout,
-                                     vk::ImageLayout newLayout,
-                                     vk::AccessFlags2 srcAccessMask,
-                                     vk::AccessFlags2 dstAccessMask,
-                                     vk::PipelineStageFlags2 srcStageMask,
-                                     vk::PipelineStageFlags2 dstStageMask);
-
-        void drawFrame();
-
         void createSyncObjects();
-
-        void cleanupSwapChain();
-        
-        void recreateSwapChain();
-
         static void framebufferResizeCallback(GLFWwindow* window, int width, int height);
-
-        void createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory);
-
-        uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties);
-
-        void copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size);
-
-        vk::raii::CommandBuffer beginSingleTimeCommands();
-
-        void endSingleTimeCommands(vk::raii::CommandBuffer& commandBuffer);
-
-        void createDescriptorSetLayout();
-
-        void createUniformBuffers();
-
-        void updateUniformBuffer(uint32_t currentImage);
-
-        void createDescriptorPool();
-
-        void createDescriptorSets();
-
+        void pickPhysicalDevice();
+        bool isDeviceSuitable(const vk::raii::PhysicalDevice& thisDevice);
+        void createLogicalDevice();
+        
+        // Frame
+        void mainLoop();
+        void drawFrame();
+        
+        //Swapchain
+        vk::SurfaceFormatKHR chooseSwapSurfaceFormat(std::vector<vk::SurfaceFormatKHR> const& availableFormats);
+        vk::PresentModeKHR chooseSwapPresentMode(std::vector<vk::PresentModeKHR> const& availablePresentModes);
+        vk::Extent2D chooseSwapExtent(vk::SurfaceCapabilitiesKHR const &capabilities);
+        uint32_t chooseSwapMinImageCount(vk::SurfaceCapabilitiesKHR const& surfaceCapabilities);
+        void createSwapChain();
+        void cleanupSwapChain();
+        void recreateSwapChain();
+        void createSwapchainImageViews();
+        
+        // Images
+        void transition_image_layout(uint32_t imageIndex,
+            vk::ImageLayout oldLayout,
+            vk::ImageLayout newLayout,
+            vk::AccessFlags2 srcAccessMask,
+            vk::AccessFlags2 dstAccessMask,
+            vk::PipelineStageFlags2 srcStageMask,
+            vk::PipelineStageFlags2 dstStageMask);
         void createImage(uint32_t width, uint32_t height, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory);
-
         void transitionImageLayout(const vk::raii::Image& image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout);
-
-        void copyBufferToImage(const vk::raii::Buffer& buffer, vk::raii::Image& image, uint32_t width, uint32_t height);
-
         vk::raii::ImageView createImageView(vk::raii::Image& image, vk::Format format);
-
+        void createTextureImage();
+        void createTextureSampler();
+        void createTextureImageView();
+        
+        // Buffers
+        void createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory);
+        uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties);
+        void copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size);
+        void copyBufferToImage(const vk::raii::Buffer& buffer, vk::raii::Image& image, uint32_t width, uint32_t height);
         void createShaderStorageBuffers();
 
+
+        // Pipelines
+        void createGraphicsPipeline();
+        [[nodiscard]] vk::raii::ShaderModule createShaderModule(const std::vector<char>& code) const;
+        void createCommandPool();
+        void createCommandBuffers();
+        void recordCommandBuffer(uint32_t imageIndex);
+        vk::raii::CommandBuffer beginSingleTimeCommands();
+        void endSingleTimeCommands(vk::raii::CommandBuffer& commandBuffer);
         void createComputePipeline();
-
         void createComputeCommandBuffers();
-
         void recordComputeCommandBuffer();
+
+
+        // Descriptors
+        void createDescriptorSetLayout();
+        void createUniformBuffers();
+        void updateUniformBuffer(uint32_t currentImage);
+        void createDescriptorPool();
+        void createDescriptorSets();
 };

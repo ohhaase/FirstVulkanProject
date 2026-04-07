@@ -80,7 +80,7 @@ void VulkanApplication::initVulkan()
     createLogicalDevice();
 
     createSwapChain();
-    createImageViews();
+    createSwapchainImageViews();
 
     createDescriptorSetLayout();
 
@@ -98,23 +98,6 @@ void VulkanApplication::initVulkan()
     createComputeCommandBuffers();
 
     createSyncObjects();
-}
-
-
-void VulkanApplication::mainLoop()
-{
-    // Loop until told to close
-    while (!glfwWindowShouldClose(window))
-    {
-        glfwPollEvents();
-        drawFrame();
-
-        double currentTime = glfwGetTime();
-        lastFrameTime = (currentTime - lastTime) * 1000.0;
-        lastTime = currentTime;
-    }
-
-    device.waitIdle();
 }
 
 
@@ -408,121 +391,6 @@ void VulkanApplication::createLogicalDevice()
 }
 
 
-vk::SurfaceFormatKHR VulkanApplication::chooseSwapSurfaceFormat(std::vector<vk::SurfaceFormatKHR> const& availableFormats)
-{
-    // This whole function needs to be rewritten to not be C++ slop
-    const auto formatIt = std::ranges::find_if(availableFormats,
-                                                [](const auto& format) {
-                                                    // Is this what I change if i need more precision?
-                                                    return format.format == vk::Format::eB8G8R8A8Srgb && format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear; 
-                                                });
-    
-    return formatIt != availableFormats.end() ? *formatIt : availableFormats[0];
-}
-
-
-vk::PresentModeKHR VulkanApplication::chooseSwapPresentMode(std::vector<vk::PresentModeKHR> const& availablePresentModes)
-{
-    // Make sure at least eFifo is available
-    assert(std::ranges::any_of(availablePresentModes, 
-                                [](auto presentMode) {
-                                    return presentMode == vk::PresentModeKHR::eFifo;
-                                }));
-
-    // If it's available, choose eMailBox. Otherwise, eFifo.
-    return std::ranges::any_of(availablePresentModes,
-                                [](const vk::PresentModeKHR value) {
-                                    return value == vk::PresentModeKHR::eMailbox;
-                                })
-                                ? vk::PresentModeKHR::eMailbox
-                                : vk::PresentModeKHR::eFifo;
-    // AHHHHH C++ CODE IS SO UGLY AND HARD TO READ WHY WOULD YOU EVER WRITE IT LIKE THISSSSS
-}
-
-
-vk::Extent2D VulkanApplication::chooseSwapExtent(vk::SurfaceCapabilitiesKHR const &capabilities)
-{
-    if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max())
-    {
-        return capabilities.currentExtent;
-    }
-
-    int width, height;
-    glfwGetFramebufferSize(window, &width, &height);
-
-    return {
-        std::clamp<uint32_t>(width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width),
-        std::clamp<uint32_t>(height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height)
-    };
-}
-
-
-uint32_t VulkanApplication::chooseSwapMinImageCount(vk::SurfaceCapabilitiesKHR const& surfaceCapabilities)
-{
-    uint32_t minImageCount = std::max(3u, surfaceCapabilities.minImageCount);
-
-    if ((surfaceCapabilities.maxImageCount > 0) && (surfaceCapabilities.maxImageCount < minImageCount))
-    {
-        minImageCount = surfaceCapabilities.maxImageCount;
-    }
-    return minImageCount;
-}
-
-
-void VulkanApplication::createSwapChain()
-{
-    // Get surface capability info
-    vk::SurfaceCapabilitiesKHR surfaceCapabilities = physicalDevice.getSurfaceCapabilitiesKHR(*surface);
-
-    swapChainExtent = chooseSwapExtent(surfaceCapabilities);
-    uint32_t minImageCount = chooseSwapMinImageCount(surfaceCapabilities);
-
-    // Get format info
-    std::vector<vk::SurfaceFormatKHR> availableFormats = physicalDevice.getSurfaceFormatsKHR(surface);
-
-    swapChainSurfaceFormat = chooseSwapSurfaceFormat(availableFormats);
-
-    // Get present mode info
-    std::vector<vk::PresentModeKHR> availablePresentModes = physicalDevice.getSurfacePresentModesKHR(surface);
-    vk::PresentModeKHR presentMode = chooseSwapPresentMode(availablePresentModes);
-
-    // Create swapchain structure
-    vk::SwapchainCreateInfoKHR swapChainCreateInfo{.surface = *surface,
-                                                    .minImageCount = minImageCount,
-                                                    .imageFormat = swapChainSurfaceFormat.format,
-                                                    .imageColorSpace = swapChainSurfaceFormat.colorSpace,
-                                                    .imageExtent = swapChainExtent,
-                                                    .imageArrayLayers = 1,
-                                                    .imageUsage = vk::ImageUsageFlagBits::eColorAttachment,
-                                                    .imageSharingMode = vk::SharingMode::eExclusive,
-                                                    .preTransform = surfaceCapabilities.currentTransform,
-                                                    .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
-                                                    .presentMode = presentMode,
-                                                    .clipped = true};
-
-    swapChainCreateInfo.oldSwapchain = nullptr; // Will eventually need to be changed once we deal with resizing
-
-    swapChain = vk::raii::SwapchainKHR(device, swapChainCreateInfo);
-    swapChainImages = swapChain.getImages();
-}
-
-
-void VulkanApplication::createImageViews()
-{
-    assert(swapChainImageViews.empty());
-
-    vk::ImageViewCreateInfo imageViewCreateInfo{.viewType = vk::ImageViewType::e2D,
-                                                .format = swapChainSurfaceFormat.format,
-                                                .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
-    
-    for (auto& image : swapChainImages)
-    {
-        imageViewCreateInfo.image = image;
-        swapChainImageViews.emplace_back(device, imageViewCreateInfo);
-    }
-}
-
-
 void VulkanApplication::createGraphicsPipeline()
 {
     // Vertex + fragment shader
@@ -687,150 +555,6 @@ void VulkanApplication::recordCommandBuffer(uint32_t imageIndex)
 }
 
 
-void VulkanApplication::transition_image_layout(uint32_t imageIndex,
-                                                vk::ImageLayout oldLayout,
-                                                vk::ImageLayout newLayout,
-                                                vk::AccessFlags2 srcAccessMask,
-                                                vk::AccessFlags2 dstAccessMask,
-                                                vk::PipelineStageFlags2 srcStageMask,
-                                                vk::PipelineStageFlags2 dstStageMask)
-{
-    vk::ImageMemoryBarrier2 barrier = {.srcStageMask = srcStageMask,
-                                        .srcAccessMask = srcAccessMask,
-                                        .dstStageMask = dstStageMask,
-                                        .dstAccessMask = dstAccessMask,
-                                        .oldLayout = oldLayout,
-                                        .newLayout = newLayout,
-                                        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                                        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                                        .image = swapChainImages[imageIndex],
-                                        .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                                            .baseMipLevel = 0,
-                                                            .levelCount = 1,
-                                                            .baseArrayLayer = 0,
-                                                            .layerCount = 1}};
-                                                
-    vk::DependencyInfo dependencyInfo = {.dependencyFlags = {},
-                                            .imageMemoryBarrierCount = 1,
-                                            .pImageMemoryBarriers = &barrier};
-
-    commandBuffers[frameIndex].pipelineBarrier2(dependencyInfo);
-}
-
-
-void VulkanApplication::drawFrame()
-{            
-    auto [result, imageIndex] = swapChain.acquireNextImage(UINT64_MAX, nullptr, *inFlightFences[frameIndex]);
-    vk::Result fenceResult = device.waitForFences(*inFlightFences[frameIndex], vk::True, UINT64_MAX);
-
-    if (fenceResult != vk::Result::eSuccess)
-    {
-        throw std::runtime_error("Failed to wait for fence!");
-    }
-    
-    if (result == vk::Result::eErrorOutOfDateKHR)
-    {
-        recreateSwapChain();
-        return;
-    }
-    if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR)
-    {
-        assert(result == vk::Result::eTimeout || result == vk::Result::eNotReady);
-        throw std::runtime_error("Failed to acquire swap chain image!");
-    }
-
-    // Only reset fence if above passes
-    device.resetFences(*inFlightFences[frameIndex]);
-
-    // Update timeline value for this frame
-    uint64_t computeWaitValue = timelineValue;
-    uint64_t computeSignalValue = ++timelineValue;
-    uint64_t graphicsWaitValue = computeSignalValue;
-    uint64_t graphicsSignalValue = ++timelineValue;
-
-    updateUniformBuffer(frameIndex);
-
-    {// Needs to be in braces for some reason?
-        recordComputeCommandBuffer();
-
-        //Submit compute work
-        vk::TimelineSemaphoreSubmitInfo computeTimelineInfo{.waitSemaphoreValueCount = 1,
-                                                            .pWaitSemaphoreValues = &computeWaitValue,
-                                                            .signalSemaphoreValueCount = 1,
-                                                            .pSignalSemaphoreValues = &computeSignalValue};
-
-        vk::PipelineStageFlags waitStages[] = {vk::PipelineStageFlagBits::eComputeShader};
-
-        vk::SubmitInfo computeSubmitInfo{.pNext = &computeTimelineInfo,
-                                            .waitSemaphoreCount = 1,
-                                            .pWaitSemaphores = &*semaphore,
-                                            .pWaitDstStageMask = waitStages,
-                                            .commandBufferCount = 1,
-                                            .pCommandBuffers = &*computeCommandBuffers[frameIndex],
-                                            .signalSemaphoreCount = 1,
-                                            .pSignalSemaphores = &*semaphore};
-
-        queue.submit(computeSubmitInfo, nullptr);
-    }
-
-    {
-        // Record graphics command bufffer
-        recordCommandBuffer(imageIndex);
-
-        // Submit graphics work (after waiting on compute)
-        vk::PipelineStageFlags waitStage = vk::PipelineStageFlagBits::eVertexInput;
-
-        vk::TimelineSemaphoreSubmitInfo graphicsTimelineInfo{.waitSemaphoreValueCount = 1,
-                                                                .pWaitSemaphoreValues = &graphicsWaitValue,
-                                                                .signalSemaphoreValueCount = 1,
-                                                                .pSignalSemaphoreValues = &graphicsSignalValue};
-
-        vk::SubmitInfo graphicsSubmitInfo{.pNext = &graphicsTimelineInfo,
-                                            .waitSemaphoreCount = 1,
-                                            .pWaitSemaphores = &*semaphore,
-                                            .pWaitDstStageMask = &waitStage,
-                                            .commandBufferCount = 1,
-                                            .pCommandBuffers = &*commandBuffers[frameIndex],
-                                            .signalSemaphoreCount = 1,
-                                            .pSignalSemaphores = &*semaphore};
-
-        queue.submit(graphicsSubmitInfo, nullptr);
-
-        // Present image (after waiting for graphics)
-        vk::SemaphoreWaitInfo waitInfo{.semaphoreCount = 1,
-                                        .pSemaphores = &*semaphore,
-                                        .pValues = &graphicsSignalValue};
-
-        vk::Result result = device.waitSemaphores(waitInfo, UINT64_MAX);
-        if (result != vk::Result::eSuccess)
-        {
-            throw std::runtime_error("Failed to wait for semaphore!");
-        }
-
-        vk::PresentInfoKHR presentInfo{.waitSemaphoreCount = 0,
-                                        .pWaitSemaphores = nullptr,
-                                        .swapchainCount = 1,
-                                        .pSwapchains = &*swapChain,
-                                        .pImageIndices = &imageIndex};
-
-        result = queue.presentKHR(presentInfo);
-
-        // Due to VULKAN_HPP_HANDLE_ERROR_OUT_DATE_AS_SUCCESS being defined, we can check to see if the screen gets resized here
-        if ((result == vk::Result::eSuboptimalKHR) || (result == vk::Result::eErrorOutOfDateKHR) || frameBufferResized)
-        {
-            frameBufferResized = false;
-            recreateSwapChain();
-        }
-        else
-        {
-            assert(result == vk::Result::eSuccess);
-        }
-    }
-
-    frameIndex = (frameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
-}
-
-
 void VulkanApplication::createSyncObjects()
 {
     inFlightFences.clear();
@@ -843,34 +567,6 @@ void VulkanApplication::createSyncObjects()
     {
         inFlightFences.emplace_back(device, vk::FenceCreateInfo{});
     }
-}
-
-
-void VulkanApplication::cleanupSwapChain()
-{
-    swapChainImageViews.clear();
-    swapChain = nullptr;
-}
-
-
-void VulkanApplication::recreateSwapChain()
-{
-    int width = 0, height = 0;
-    glfwGetFramebufferSize(window, &width, &height);
-    
-    // Minimized
-    while(width == 0 || height == 0)
-    {
-        glfwGetFramebufferSize(window, &width, &height);
-        glfwWaitEvents();
-    }
-    
-    device.waitIdle();
-
-    cleanupSwapChain();
-
-    createSwapChain();
-    createImageViews();
 }
 
 
@@ -1068,69 +764,6 @@ void VulkanApplication::createDescriptorSets()
 }
 
 
-void VulkanApplication::createImage(uint32_t width, uint32_t height, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory)
-{
-    vk::ImageCreateInfo imageInfo{.imageType = vk::ImageType::e2D,
-                                    .format = format,
-                                    .extent = {width, height, 1},
-                                    .mipLevels = 1,
-                                    .arrayLayers = 1,
-                                    .samples = vk::SampleCountFlagBits::e1,
-                                    .tiling = tiling,
-                                    .usage = usage,
-                                    .sharingMode = vk::SharingMode::eExclusive};
-
-    image = vk::raii::Image(device, imageInfo);
-
-    vk::MemoryRequirements memRequirements = image.getMemoryRequirements();
-
-    vk::MemoryAllocateInfo allocInfo{.allocationSize = memRequirements.size,
-                                        .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties)};
-
-    imageMemory = vk::raii::DeviceMemory(device, allocInfo);
-    image.bindMemory(imageMemory, 0);
-}
-
-
-void VulkanApplication::transitionImageLayout(const vk::raii::Image& image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout)
-{
-    vk::raii::CommandBuffer commandBuffer = beginSingleTimeCommands();
-
-    vk::ImageMemoryBarrier barrier{.oldLayout = oldLayout,
-                                    .newLayout = newLayout,
-                                    .image = image,
-                                    .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
-
-    vk::PipelineStageFlags sourceStage;
-    vk::PipelineStageFlags destinationStage;
-
-    if (oldLayout == vk::ImageLayout::eUndefined && newLayout == vk::ImageLayout::eTransferDstOptimal)
-    {
-        barrier.srcAccessMask = {};
-        barrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
-
-        sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
-        destinationStage = vk::PipelineStageFlagBits::eTransfer;
-    }
-    else if (oldLayout == vk::ImageLayout::eTransferDstOptimal && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal)
-    {
-        barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
-        barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
-
-        sourceStage = vk::PipelineStageFlagBits::eTransfer;
-        destinationStage = vk::PipelineStageFlagBits::eFragmentShader;
-    }
-    else
-    {
-        throw std::invalid_argument("Unsupported layout transition!");
-    }
-
-    commandBuffer.pipelineBarrier(sourceStage, destinationStage, {}, {}, nullptr, barrier);
-
-    endSingleTimeCommands(commandBuffer);
-}
-
-
 void VulkanApplication::copyBufferToImage(const vk::raii::Buffer& buffer, vk::raii::Image& image, uint32_t width, uint32_t height)
 {
     vk::raii::CommandBuffer commandBuffer = beginSingleTimeCommands();
@@ -1145,17 +778,6 @@ void VulkanApplication::copyBufferToImage(const vk::raii::Buffer& buffer, vk::ra
     commandBuffer.copyBufferToImage(buffer, image, vk::ImageLayout::eTransferDstOptimal, {region});
 
     endSingleTimeCommands(commandBuffer);
-}
-
-
-vk::raii::ImageView VulkanApplication::createImageView(vk::raii::Image& image, vk::Format format)
-{
-    vk::ImageViewCreateInfo imageViewCreateInfo{.image = image,
-                                                .viewType = vk::ImageViewType::e2D,
-                                                .format = format,
-                                                .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
-    
-    return vk::raii::ImageView(device, imageViewCreateInfo);
 }
 
 
