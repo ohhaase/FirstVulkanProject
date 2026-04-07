@@ -1,16 +1,20 @@
 #include <iostream>
 #include <stdexcept>
 
-#include "vulkan_backend/VulkanApplication.hpp"
-#include "core/file_functions.hpp"
+#include "vk_backend/vk_engine.hpp"
 
 
 int main()
 {
     try
     {
-        VulkanApplication app;
-        app.run();
+        VulkanEngine engine;
+
+        engine.init();
+
+        engine.run();
+
+        engine.cleanup();
     }
     catch (const std::exception& e)
     {

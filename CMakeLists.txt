@@ -12,6 +12,7 @@ project(
 # Compiler settings
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 
 # Default build type (adds -O3)
@@ -27,11 +28,13 @@ target_sources(${PROJECT_NAME} PRIVATE
     # ./src/
     src/main.cpp
 
-    # ./src/vulkan_backend/
-    src/vulkan_backend/VulkanApplication.cpp
-    src/vulkan_backend/VKA_Frame.cpp
-    src/vulkan_backend/VKA_Swapchain.cpp
-    src/vulkan_backend/VKA_Images.cpp
+    # ./src/vk_backend/
+    src/vk_backend/vk_engine.cpp
+    src/vk_backend/vk_images.cpp
+    src/vk_backend/vk_descriptors.cpp
+    src/vk_backend/vk_initializers.cpp
+    src/vk_backend/vk_pipelines.cpp
+    src/vk_backend/vk_types.hpp
 
     # ./src/core/
     src/core/file_functions.cpp
@@ -48,7 +51,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 # Vulkan
 find_package(Vulkan REQUIRED)
 
-target_link_libraries (${PROJECT_NAME} Vulkan::Vulkan)
+target_link_libraries(${PROJECT_NAME} Vulkan::Vulkan)
 
 # GLFW
 include(FetchContent)
@@ -77,6 +80,15 @@ FetchContent_MakeAvailable(glm)
 
 
 target_link_libraries(${PROJECT_NAME} glm::glm)
+
+# vk-bootstrap
+FetchContent_Declare(
+    fetch_vk_bootstrap
+    GIT_REPOSITORY https://github.com/charles-lunarg/vk-bootstrap
+    GIT_TAG        fcf002503037a0494b04d4a378e25b97681e936c
+)
+FetchContent_MakeAvailable(fetch_vk_bootstrap)
+target_link_libraries(${PROJECT_NAME} vk-bootstrap::vk-bootstrap)
 
 # Slang shader compilation
 find_program(SLANGC_EXECUTABLE slangc HINTS $ENV{VULKAN_SDK}/bin REQUIRED)
