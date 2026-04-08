@@ -34,7 +34,6 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/vk_backend/vk_descriptors.cpp
     src/vk_backend/vk_initializers.cpp
     src/vk_backend/vk_pipelines.cpp
-    src/vk_backend/vk_types.hpp
 
     # ./src/core/
     src/core/file_functions.cpp
@@ -44,6 +43,7 @@ target_sources(${PROJECT_NAME} PRIVATE
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${PROJECT_SOURCE_DIR}/include
     ${PROJECT_SOURCE_DIR}/src
+    ${PROJECT_SOURCE_DIR}/src/vk_backend
 )
 
 # Link external libraries
@@ -85,7 +85,7 @@ target_link_libraries(${PROJECT_NAME} glm::glm)
 FetchContent_Declare(
     fetch_vk_bootstrap
     GIT_REPOSITORY https://github.com/charles-lunarg/vk-bootstrap
-    GIT_TAG        fcf002503037a0494b04d4a378e25b97681e936c
+    GIT_TAG        49cfb10a2570cd878f4c06ec3dd6eb1dcf8464d0
 )
 FetchContent_MakeAvailable(fetch_vk_bootstrap)
 target_link_libraries(${PROJECT_NAME} vk-bootstrap::vk-bootstrap)

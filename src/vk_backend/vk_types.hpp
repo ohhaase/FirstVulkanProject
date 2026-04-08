@@ -20,4 +20,4 @@
 
 #include "globals.hpp"
 
-#define VK_CHECK(x) do {VkResult err = x; if (err) {throw std::runtime_error("Detected Vulkan Error: {}" + string_VkResult(err))}} while (0)
+#define VK_CHECK(x) do {VkResult err = x; if (err != VK_SUCCESS) {throw std::runtime_error(std::string("Detected Vulkan Error: {}") + string_VkResult(err));}} while (0)
