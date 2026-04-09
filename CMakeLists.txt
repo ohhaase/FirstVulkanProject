@@ -91,29 +91,31 @@ FetchContent_MakeAvailable(fetch_vk_bootstrap)
 target_link_libraries(${PROJECT_NAME} vk-bootstrap::vk-bootstrap)
 
 # Slang shader compilation
-find_program(SLANGC_EXECUTABLE slangc HINTS $ENV{VULKAN_SDK}/bin REQUIRED)
+find_program(GLSL_VALIDATOR glslangValidator HINTS /usr/bin /usr/local/bin $ENV{VULKAN_SDK}/Bin/ $ENV{VULKAN_SDK}/Bin32/)
 
-function (add_slang_shader_target TARGET)
-    cmake_parse_arguments("SHADER" "" "" "SOURCES" ${ARGN})
-    set (SHADERS_DIR ${CMAKE_CURRENT_LIST_DIR}/shaders)
-    set (ENTRY_POINTS -entry vertMain -entry fragMain -entry compMain)
-    add_custom_command(
-        OUTPUT ${SHADERS_DIR}
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADERS_DIR}
+file(GLOB_RECURSE GLSL_SOURCE_FILES
+    "${PROJECT_SOURCE_DIR}/shaders/*.frag"
+    "${PROJECT_SOURCE_DIR}/shaders/*.vert"
+    "${PROJECT_SOURCE_DIR}/shaders/*.comp"
     )
-    add_custom_command(
-        OUTPUT ${SHADERS_DIR}/slang.spv
-        COMMAND ${SLANGC_EXECUTABLE} ${SHADER_SOURCES} -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name ${ENTRY_POINTS} -o slang.spv
-        WORKING_DIRECTORY ${SHADERS_DIR}
-        DEPENDS ${SHADERS_DIR}/${SHADER_SOURCES}
-        COMMENT "Compiling Slang Shaders"
-        VERBATIM
-    )
-    add_custom_target(${TARGET} DEPENDS ${SHADERS_DIR}/slang.spv)
-endfunction()
 
-add_slang_shader_target(shaders SOURCES shader.slang)
-add_dependencies(${PROJECT_NAME} shaders)
+foreach(GLSL ${GLSL_SOURCE_FILES})
+  message(STATUS "BUILDING SHADER")
+  get_filename_component(FILE_NAME ${GLSL} NAME)
+  set(SPIRV "${PROJECT_SOURCE_DIR}/shaders/${FILE_NAME}.spv")
+  message(STATUS ${GLSL})
+  message(STATUS COMMAND ${GLSL_VALIDATOR} -V ${GLSL} -o ${SPIRV})
+  add_custom_command(
+    OUTPUT ${SPIRV}
+    COMMAND ${GLSL_VALIDATOR} -V ${GLSL} -o ${SPIRV}
+    DEPENDS ${GLSL})
+  list(APPEND SPIRV_BINARY_FILES ${SPIRV})
+endforeach(GLSL)
+
+add_custom_target(
+    Shaders 
+    DEPENDS ${SPIRV_BINARY_FILES}
+    )
 
 # Define roots so the program knows where to find things
 target_compile_definitions(${PROJECT_NAME} PRIVATE

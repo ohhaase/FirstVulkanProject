@@ -21,3 +21,13 @@
 #include "globals.hpp"
 
 #define VK_CHECK(x) do {VkResult err = x; if (err != VK_SUCCESS) {throw std::runtime_error(std::string("Detected Vulkan Error: {}") + string_VkResult(err));}} while (0)
+
+
+struct AllocatedImage
+{
+    VkImage image;
+    VkImageView imageView;
+    VmaAllocation allocation;
+    VkExtent3D imageExtent;
+    VkFormat imageFormat;
+};
