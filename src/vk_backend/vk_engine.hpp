@@ -1,5 +1,9 @@
 #pragma once
 
+#include "imgui/imgui.h"
+#include "imgui/imgui_impl_glfw.h"
+#include "imgui/imgui_impl_vulkan.h"
+
 #include "vk_types.hpp"
 #include "vk_descriptors.hpp"
 
@@ -123,4 +127,6 @@ struct VulkanEngine
         void init_pipelines();
         void init_background_pipelines();
 
+        void init_imgui();
+        void draw_imgui(VkCommandBuffer cmd, VkImageView targetImageView);
 };

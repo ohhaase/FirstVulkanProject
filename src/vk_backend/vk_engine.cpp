@@ -50,6 +50,8 @@ void VulkanEngine::init()
 
     init_pipelines();
 
+    init_imgui();
+
     // If everything went fine...
     isInitialized = true;
 }
@@ -138,8 +140,14 @@ void VulkanEngine::draw()
     // Copy drawImage into swapchain image
     vkutil::copy_image_to_image(commandBuffer, drawImage.image, swapchainImages[swapchainImageIndex], drawExtent, swapchainExtent);
 
+    // Set swapchain image layout to attachment optimal so we can draw it
+    vkutil::transition_image(commandBuffer, swapchainImages[swapchainImageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+    // Draw imgui into the swapchain image
+    draw_imgui(commandBuffer, swapchainImageViews[swapchainImageIndex]);
+
     // transition swapchain back to presentable
-    vkutil::transition_image(commandBuffer, swapchainImages[swapchainImageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    vkutil::transition_image(commandBuffer, swapchainImages[swapchainImageIndex], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
     // Finalize command buffer
     VK_CHECK(vkEndCommandBuffer(commandBuffer));
@@ -182,8 +190,24 @@ void VulkanEngine::run()
     // Loop until told to close
     while (!glfwWindowShouldClose(window))
     {
+        // Poll events
         glfwPollEvents();
 
+        // Imgui new frame
+        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+
+        // Some imgui ui to test
+        ImGui::ShowDemoWindow();
+
+        // Make imgui calculate internal draw structures
+        ImGui::Render();
+        
+        // Draw
+        draw();
+        
+        // Frame number/fps stuff
         double currentTime = glfwGetTime();
         deltaTime = currentTime - lastTime;
         lastTime = currentTime;
@@ -192,8 +216,6 @@ void VulkanEngine::run()
         {
             std::cout << "FPS: " << 1000 / deltaTime << "\n";
         }
-
-        draw();
 
         frameNumber++;
     }
@@ -513,4 +535,81 @@ void VulkanEngine::init_background_pipelines()
         vkDestroyPipelineLayout(device, gradientPipelineLayout, nullptr);
         vkDestroyPipeline(device, gradientPipeline, nullptr);
     });
+}
+
+
+void VulkanEngine::init_imgui()
+{
+    // 1: create descriptor pool for IMGUI
+    //   Size of the pool is oversize (?) but copied from imgui demo
+
+    VkDescriptorPoolSize pool_sizes[] = {{VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
+                                         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000},
+                                         {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000},
+                                         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000},
+                                         {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000},
+		                                 {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000},
+		                                 {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000},
+		                                 {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000},
+		                                 {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000},
+		                                 {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000},
+		                                 {VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000}};
+
+    VkDescriptorPoolCreateInfo pool_info = {};
+    pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    pool_info.maxSets = 1000;
+    pool_info.poolSizeCount = (uint32_t)std::size(pool_sizes);
+    pool_info.pPoolSizes = pool_sizes;
+
+    VkDescriptorPool imguiPool;
+    VK_CHECK(vkCreateDescriptorPool(device, &pool_info, nullptr, &imguiPool));
+
+    // 2: initialize imgui library
+
+    // initialize core structures of imgui
+    ImGui::CreateContext();
+
+    // initialize imgui for GLFW
+    ImGui_ImplGlfw_InitForVulkan(window, true);
+
+    // initialize imgui for vulkan
+    ImGui_ImplVulkan_InitInfo init_info = {};
+    init_info.Instance = instance;
+    init_info.PhysicalDevice = chosenGPU;
+    init_info.Device = device;
+    init_info.Queue = graphicsQueue;
+    init_info.DescriptorPool = imguiPool;
+    init_info.MinImageCount = 3;
+    init_info.ImageCount = 3;
+    init_info.UseDynamicRendering = true;
+
+    // dynamics rendering parameters for imgui to use
+    init_info.PipelineInfoMain.PipelineRenderingCreateInfo = {.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+    init_info.PipelineInfoMain.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
+    init_info.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = &swapChainImageFormat;
+    init_info.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+
+    ImGui_ImplVulkan_Init(&init_info);
+
+    // ImGui_ImplVulkan_CreateFontsTexture(); // Removed supposedly?
+
+    // Add the destroy to the deletion queue
+    mainDeletionQueue.push_function([=](){
+        ImGui_ImplVulkan_Shutdown();
+        vkDestroyDescriptorPool(device, imguiPool, nullptr);
+    });
+}
+
+
+void VulkanEngine::draw_imgui(VkCommandBuffer cmd, VkImageView targetImageView)
+{
+    VkRenderingAttachmentInfo colorAttachment = vkinit::attachment_info(targetImageView, nullptr, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    VkRenderingInfo renderInfo = vkinit::rendering_info(swapchainExtent, &colorAttachment, nullptr);
+
+    vkCmdBeginRendering(cmd, &renderInfo);
+
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+
+    vkCmdEndRendering(cmd);
 }

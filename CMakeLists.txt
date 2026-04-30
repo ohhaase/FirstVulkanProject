@@ -37,6 +37,15 @@ target_sources(${PROJECT_NAME} PRIVATE
 
     # ./src/core/
     src/core/file_functions.cpp
+
+    # ./include/imgui
+    include/imgui/imgui_demo.cpp
+    include/imgui/imgui_draw.cpp
+    include/imgui/imgui_tables.cpp
+    include/imgui/imgui_widgets.cpp
+    include/imgui/imgui.cpp
+    include/imgui/imgui_impl_glfw.cpp
+    include/imgui/imgui_impl_vulkan.cpp
 )
 
 # Add include subdirectories
@@ -66,8 +75,8 @@ set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(glfw)
-
 target_link_libraries(${PROJECT_NAME} glfw)
+
 
 # GLM
 FetchContent_Declare(
@@ -77,9 +86,8 @@ FetchContent_Declare(
 )
 
 FetchContent_MakeAvailable(glm)
-
-
 target_link_libraries(${PROJECT_NAME} glm::glm)
+
 
 # vk-bootstrap
 FetchContent_Declare(
