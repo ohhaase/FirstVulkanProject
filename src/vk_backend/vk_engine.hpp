@@ -7,6 +7,25 @@
 #include "vk_types.hpp"
 #include "vk_descriptors.hpp"
 
+struct ComputePushConstants
+{
+    glm::vec4 data1;
+    glm::vec4 data2;
+    glm::vec4 data3;
+    glm::vec4 data4;
+};
+
+struct ComputeEffect
+{
+    const char* name;
+
+    VkPipeline pipeline;
+    VkPipelineLayout layout;
+
+    ComputePushConstants data;
+};
+
+
 struct DeletionQueue
 {
     std::deque<std::function<void()>> deletors;
@@ -97,6 +116,10 @@ struct VulkanEngine
         // Pipelines
         VkPipeline gradientPipeline;
         VkPipelineLayout gradientPipelineLayout;
+
+        // Different compute shaders
+        std::vector<ComputeEffect> backgroundEffects;
+        int currentBackgroundEffect = 0;
 
         // Initializes everything
         void init();
