@@ -46,6 +46,8 @@ void VulkanEngine::init()
 
     init_sync_structures();
 
+    init_default_data();
+
     init_descriptors();
 
     init_pipelines();
@@ -377,6 +379,17 @@ void VulkanEngine::init_commands()
         VK_CHECK(vkAllocateCommandBuffers(device, &cmdAllocInfo, &frames[i].mainCommandBuffer));
     }
     
+    // Immediate submit commands
+    VK_CHECK(vkCreateCommandPool(device, &commandPoolInfo, nullptr, &immCommandPool));
+
+    VkCommandBufferAllocateInfo cmdAllocInfo = vkinit::command_buffer_allocate_info(immCommandPool, 1);
+
+    VK_CHECK(vkAllocateCommandBuffers(device, &cmdAllocInfo, &immCommandBuffer));
+
+    // Add immediate command pool to deletion queue
+    mainDeletionQueue.push_function([=, this](){
+        vkDestroyCommandPool(device, immCommandPool, nullptr);
+    });
 }
 
 
@@ -400,6 +413,10 @@ void VulkanEngine::init_sync_structures()
         renderSemaphores.push_back({});
         VK_CHECK(vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &renderSemaphores[i]));
     }
+
+    // Immediate commands fence
+    VK_CHECK((vkCreateFence(device, &fenceCreateInfo, nullptr, &immFence)));
+    mainDeletionQueue.push_function([=, this]() {vkDestroyFence(device, immFence, nullptr);});
 }
 
 
@@ -460,7 +477,7 @@ void VulkanEngine::draw_background(VkCommandBuffer commandBuffer)
 void VulkanEngine::init_descriptors()
 {
     // Create a descriptor pool to hold 10 (?) sets with 1 image each
-    std::vector<DescriptorAllocator::PoolSizeRatio> sizes = {{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1}};
+    std::vector<DescriptorAllocator::PoolSizeRatio> sizes = {{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1}};
 
     globalDescriptorAllocator.init_pool(device, 10, sizes);
 
@@ -468,27 +485,36 @@ void VulkanEngine::init_descriptors()
     {
         DescriptorLayoutBuilder builder;
         builder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+        builder.add_binding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
         drawImageDescriptorLayout = builder.build(device, VK_SHADER_STAGE_COMPUTE_BIT);
     }
 
-    // Allocate a descriptor set for out draw image
+    // Allocate a descriptor set for our draw image
     drawImageDescriptors = globalDescriptorAllocator.allocate(device, drawImageDescriptorLayout);
 
-    VkDescriptorImageInfo imgInfo{};
-    imgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-    imgInfo.imageView = drawImage.imageView;
+    {
+        DescriptorWriter writer;
+        writer.write_image(0, drawImage.imageView, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+        writer.write_image(1, errorCheckerboardImage.imageView, defaultSamplerNearest, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 
-    VkWriteDescriptorSet drawImageWrite = {};
-    drawImageWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    drawImageWrite.pNext = nullptr;
+        writer.update_set(device, drawImageDescriptors);
+    }
 
-    drawImageWrite.dstBinding = 0;
-    drawImageWrite.dstSet = drawImageDescriptors;
-    drawImageWrite.descriptorCount = 1;
-    drawImageWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    drawImageWrite.pImageInfo = &imgInfo;
+    // VkDescriptorImageInfo imgInfo{};
+    // imgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    // imgInfo.imageView = drawImage.imageView;
+
+    // VkWriteDescriptorSet drawImageWrite = {};
+    // drawImageWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    // drawImageWrite.pNext = nullptr;
+
+    // drawImageWrite.dstBinding = 0;
+    // drawImageWrite.dstSet = drawImageDescriptors;
+    // drawImageWrite.descriptorCount = 1;
+    // drawImageWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    // drawImageWrite.pImageInfo = &imgInfo;
     
-    vkUpdateDescriptorSets(device, 1, &drawImageWrite, 0, nullptr);
+    // vkUpdateDescriptorSets(device, 1, &drawImageWrite, 0, nullptr);
 
     // Make sure both the descriptor and allocator and the new layout get cleaned up
     mainDeletionQueue.push_function([=, this](){
@@ -666,4 +692,191 @@ void VulkanEngine::draw_imgui(VkCommandBuffer cmd, VkImageView targetImageView)
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
 
     vkCmdEndRendering(cmd);
+}
+
+
+void VulkanEngine::immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function)
+{
+    // Reset fence and buffer
+    VK_CHECK(vkResetFences(device, 1, &immFence));
+    VK_CHECK(vkResetCommandBuffer(immCommandBuffer, 0));
+
+    VkCommandBuffer cmd = immCommandBuffer;
+
+    // Begin command buffer
+    VkCommandBufferBeginInfo cmdBeginInfo = vkinit::command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+    VK_CHECK(vkBeginCommandBuffer(cmd, &cmdBeginInfo));
+
+    // Run function
+    function(cmd);
+
+    // End buffer
+    VK_CHECK(vkEndCommandBuffer(cmd));
+
+    // Submit, execute, and wait for it to finish
+    VkCommandBufferSubmitInfo cmdInfo = vkinit::command_buffer_submit_info(cmd);
+    VkSubmitInfo2 submit = vkinit::submit_info(&cmdInfo, nullptr, nullptr);
+
+    VK_CHECK(vkQueueSubmit2(graphicsQueue, 1, &submit, immFence));
+
+    VK_CHECK(vkWaitForFences(device, 1, &immFence, true, 9999999999));
+}
+
+
+AllocatedBuffer VulkanEngine::create_buffer(size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage)
+{
+    // Allocate buffer
+    VkBufferCreateInfo bufferInfo = {};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.pNext = nullptr;
+
+    bufferInfo.size = allocSize;
+    bufferInfo.usage = usage;
+
+    VmaAllocationCreateInfo vmaAllocInfo = {};
+    vmaAllocInfo.usage = memoryUsage;
+    vmaAllocInfo.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+
+    AllocatedBuffer newBuffer;
+    VK_CHECK(vmaCreateBuffer(allocator, &bufferInfo, &vmaAllocInfo, &newBuffer.buffer, &newBuffer.allocation, &newBuffer.info));
+
+    return newBuffer;
+}
+
+
+void VulkanEngine::destroy_buffer(const AllocatedBuffer& buffer)
+{
+    vmaDestroyBuffer(allocator, buffer.buffer, buffer.allocation);
+}
+
+
+AllocatedImage VulkanEngine::create_image(VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped /*= false*/)
+{
+    AllocatedImage newImage;
+    newImage.imageFormat = format;
+    newImage.imageExtent = size;
+
+    VkImageCreateInfo img_info = vkinit::image_create_info(format, usage, size);
+    if (mipmapped)
+    {
+        img_info.mipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(size.width, size.height)))) + 1;
+    }
+
+    // Always allocate images on dedicated gpu memory
+    VmaAllocationCreateInfo allocInfo = {};
+    allocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+    allocInfo.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+    // Allocate and create image
+    VK_CHECK(vmaCreateImage(allocator, &img_info, &allocInfo, &newImage.image, &newImage.allocation, nullptr));
+
+    // If the format is a depth format (??) we need to use correct aspect flag
+    VkImageAspectFlags aspectFlag = VK_IMAGE_ASPECT_COLOR_BIT;
+    if (format == VK_FORMAT_D32_SFLOAT)
+    {
+        aspectFlag = VK_IMAGE_ASPECT_DEPTH_BIT;
+    }
+
+    // Build an image view for the image
+    VkImageViewCreateInfo view_info = vkinit::imageview_create_info(format, newImage.image, aspectFlag);
+    view_info.subresourceRange.levelCount = img_info.mipLevels;
+
+    VK_CHECK(vkCreateImageView(device, &view_info, nullptr, &newImage.imageView));
+
+    return newImage;
+}
+
+
+AllocatedImage VulkanEngine::create_texture_image(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped /*= false*/)
+{
+    size_t data_size = size.depth * size.width * size.height * 4; // 4 for the RGBA
+    AllocatedBuffer uploadBuffer = create_buffer(data_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+
+    memcpy(uploadBuffer.info.pMappedData, data, data_size);
+
+    AllocatedImage newImage = create_image(size, format, usage | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, mipmapped);
+
+
+    // Immediate submit the data transfer
+    immediate_submit([&](VkCommandBuffer cmd){
+        vkutil::transition_image(cmd, newImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+        VkBufferImageCopy copyRegion = {};
+        copyRegion.bufferOffset = 0;
+        copyRegion.bufferRowLength = 0;
+        copyRegion.bufferImageHeight = 0;
+
+        copyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        copyRegion.imageSubresource.mipLevel = 0;
+        copyRegion.imageSubresource.baseArrayLayer = 0;
+        copyRegion.imageSubresource.layerCount = 1;
+        copyRegion.imageExtent = size;
+
+        // Copy buffer to image
+        vkCmdCopyBufferToImage(cmd, uploadBuffer.buffer, newImage.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+
+        vkutil::transition_image(cmd, newImage.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    });
+
+    destroy_buffer(uploadBuffer);
+
+    return newImage;
+}
+
+
+void VulkanEngine::destroy_image(const AllocatedImage& img)
+{
+    vkDestroyImageView(device, img.imageView, nullptr);
+    vmaDestroyImage(allocator, img.image, img.allocation);
+}
+
+
+void VulkanEngine::init_default_data()
+{
+    // Default solid textures, 1 pixel each
+    uint32_t white = glm::packUnorm4x8(glm::vec4(1, 1, 1, 1));
+    whiteImage = create_texture_image((void*)&white, VkExtent3D{1, 1, 1}, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT);
+
+    uint32_t grey = glm::packUnorm4x8(glm::vec4(0.66f, 0.66f, 0.66f, 1));
+    greyImage = create_texture_image((void*)&grey, VkExtent3D{1, 1, 1}, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT);
+
+    uint32_t black = glm::packUnorm4x8(glm::vec4(0, 0, 0, 1));
+    blackImage = create_texture_image((void*)&black, VkExtent3D{1, 1, 1}, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT);
+
+    // Default checkerboard image
+    uint32_t magenta = glm::packUnorm4x8(glm::vec4(1, 0, 1, 1));
+    std::array<uint32_t, 16*16> pixels;
+    for (int x = 0; x < 16; x++)
+    {
+        for (int y = 0; y < 16; y++)
+        {
+            pixels[y*16 + x] = ((x % 2) ^ (y % 2)) ? magenta : black;
+        }
+    }
+
+    errorCheckerboardImage = create_texture_image(pixels.data(), VkExtent3D{16, 16, 1}, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT);
+
+    // Create samplers
+    VkSamplerCreateInfo sampl = {.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+
+    // Nearest
+    sampl.magFilter = VK_FILTER_NEAREST;
+    sampl.minFilter = VK_FILTER_NEAREST;
+    vkCreateSampler(device, &sampl, nullptr, &defaultSamplerNearest);
+
+    // Linear
+    sampl.magFilter = VK_FILTER_LINEAR;
+    sampl.minFilter = VK_FILTER_LINEAR;
+    vkCreateSampler(device, &sampl, nullptr, &defaultSamplerLinear);
+
+    // Add things to deletion queue
+    mainDeletionQueue.push_function([&](){
+        vkDestroySampler(device, defaultSamplerNearest, nullptr);
+        vkDestroySampler(device, defaultSamplerLinear, nullptr);
+
+        destroy_image(whiteImage);
+        destroy_image(greyImage);
+        destroy_image(blackImage);
+        destroy_image(errorCheckerboardImage);
+    });
 }

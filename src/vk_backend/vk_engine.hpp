@@ -121,6 +121,22 @@ struct VulkanEngine
         std::vector<ComputeEffect> backgroundEffects;
         int currentBackgroundEffect = 0;
 
+        // Immediate submit structures
+        VkFence immFence;
+        VkCommandBuffer immCommandBuffer;
+        VkCommandPool immCommandPool;
+
+        void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
+
+        // Some test images
+        AllocatedImage whiteImage;
+        AllocatedImage blackImage;
+        AllocatedImage greyImage;
+        AllocatedImage errorCheckerboardImage;
+
+        VkSampler defaultSamplerLinear;
+        VkSampler defaultSamplerNearest;
+
         // Initializes everything
         void init();
 
@@ -133,7 +149,6 @@ struct VulkanEngine
         // Main loop
         void run();
 
-
     private:
         void init_GLFW();
         void init_vulkan();
@@ -141,6 +156,7 @@ struct VulkanEngine
         void init_commands();
         void init_sync_structures();
         void init_descriptors();
+        void init_default_data();
 
         void create_swapchain(uint32_t width, uint32_t height);
         void destroy_swapchain();
@@ -152,4 +168,11 @@ struct VulkanEngine
 
         void init_imgui();
         void draw_imgui(VkCommandBuffer cmd, VkImageView targetImageView);
+
+        AllocatedBuffer create_buffer(size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage);
+        void destroy_buffer(const AllocatedBuffer& buffer);
+
+        AllocatedImage create_image(VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = false);
+        AllocatedImage create_texture_image(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = false);
+        void destroy_image(const AllocatedImage& img);
 };

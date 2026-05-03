@@ -125,6 +125,8 @@ add_custom_target(
     DEPENDS ${SPIRV_BINARY_FILES}
     )
 
+add_dependencies(${PROJECT_NAME} Shaders)
+
 # Define roots so the program knows where to find things
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     SHADER_DIR="${CMAKE_SOURCE_DIR}/shaders/"
