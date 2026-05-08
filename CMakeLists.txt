@@ -15,6 +15,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -Wno-nullability-completeness")
+endif()
+
+
 # Default build type (adds -O3)
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
