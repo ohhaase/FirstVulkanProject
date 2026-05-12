@@ -84,20 +84,20 @@ VkDescriptorSet DescriptorAllocator::allocate(VkDevice device, VkDescriptorSetLa
 }
 
 
-void DescriptorWriter::write_image(int binding, VkImageView image, VkSampler sampler, VkImageLayout layout, VkDescriptorType type)
+void DescriptorWriter::write_image(DescImgInfo& descImage)
 {
     VkDescriptorImageInfo& info = imageInfos.emplace_back(VkDescriptorImageInfo{
-        .sampler = sampler,
-        .imageView = image,
-        .imageLayout = layout
+        .sampler = descImage.sampler,
+        .imageView = descImage.imageView,
+        .imageLayout = descImage.layout
     });
 
     VkWriteDescriptorSet write = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
 
-    write.dstBinding = binding;
+    write.dstBinding = descImage.binding;
     write.dstSet = VK_NULL_HANDLE; // left empty until we need to write it
     write.descriptorCount = 1;
-    write.descriptorType = type;
+    write.descriptorType = descImage.type;
     write.pImageInfo = &info;
 
     writes.push_back(write);

@@ -6,6 +6,10 @@
 #define VMA_IMPLEMENTATION
 #include <VMA/vk_mem_alloc.h>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image/stb_image.h>
+
+
 #include <chrono>
 #include <thread>
 
@@ -355,6 +359,8 @@ void VulkanEngine::init_swapchain()
     VkImageViewCreateInfo rview_info = vkinit::imageview_create_info(drawImage.imageFormat, drawImage.image, VK_IMAGE_ASPECT_COLOR_BIT);
     VK_CHECK(vkCreateImageView(device, &rview_info, nullptr, &drawImage.imageView));
 
+    drawImageDescInfo = {0, drawImage.imageView, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE};
+
     // Add to deletion queues
     mainDeletionQueue.push_function([this](){
         vkDestroyImageView(device, drawImage.imageView, nullptr);
@@ -483,7 +489,7 @@ void VulkanEngine::init_descriptors()
         // Create a descriptor pool to hold 1 set (maybe more, for each sim?) with 1 image each
         std::vector<DescriptorAllocator::PoolSizeRatio> sizes = {{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1}}; // Draw image by default
 
-        for (ComputeSim::descInfo& thisDescriptor: thisSim.descriptors)
+        for (DescImgInfo& thisDescriptor: thisSim.descriptors)
         {
             DescriptorAllocator::PoolSizeRatio size = {thisDescriptor.type, 1};
             sizes.push_back(size);
@@ -497,7 +503,7 @@ void VulkanEngine::init_descriptors()
             builder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE); // Draw image by default
 
             // Loop over descriptors in the sim
-            for (ComputeSim::descInfo& thisDescriptor: thisSim.descriptors)
+            for (DescImgInfo& thisDescriptor: thisSim.descriptors)
             {
                 builder.add_binding(thisDescriptor.binding, thisDescriptor.type);
             }
@@ -510,12 +516,12 @@ void VulkanEngine::init_descriptors()
 
         {
             DescriptorWriter writer;
-            writer.write_image(0, drawImage.imageView, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE); // Draw image by default
+            writer.write_image(drawImageDescInfo); // Draw image by default
 
             // Other descriptors
-            for (ComputeSim::descInfo& thisDescriptor: thisSim.descriptors)
+            for (DescImgInfo& thisDescriptor: thisSim.descriptors)
             {
-                writer.write_image(thisDescriptor.binding, thisDescriptor.imageView, thisDescriptor.sampler, thisDescriptor.layout, thisDescriptor.type);
+                writer.write_image(thisDescriptor);
             }
 
             writer.update_set(device, thisSim.descSet);
@@ -532,8 +538,6 @@ void VulkanEngine::init_descriptors()
 
 void VulkanEngine::init_pipelines()
 {
-    // init_background_pipelines();
-
     for (ComputeSim& thisSim: computeSims)
     {
         // Push constant info
@@ -588,96 +592,6 @@ void VulkanEngine::init_pipelines()
         });
     }
 }
-
-
-// void VulkanEngine::init_background_pipelines()
-// {
-//     // Push constant info
-//     VkPushConstantRange pushConstant{};
-//     pushConstant.offset = 0;
-//     pushConstant.size = sizeof(ComputePushConstants);
-//     pushConstant.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-//     // Compute layout info
-//     VkPipelineLayoutCreateInfo computeLayout{};
-//     computeLayout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-//     computeLayout.pNext = nullptr;
-
-//     computeLayout.pSetLayouts = &globalDescriptorLayout;
-//     computeLayout.setLayoutCount = 1;
-
-//     computeLayout.pPushConstantRanges = &pushConstant;
-//     computeLayout.pushConstantRangeCount = 1;
-
-//     VK_CHECK(vkCreatePipelineLayout(device, &computeLayout, nullptr, &gradientPipelineLayout));
-
-//     // Get both shaders
-//     VkShaderModule gradientShader;
-//     if (!vkutil::load_shader_module(std::string(SHADER_DIR) + "gradient_color.comp.spv", device, &gradientShader))
-//     {
-//         throw std::runtime_error("Error while building compute shader!");
-//     }
-
-//     VkShaderModule skyShader;
-//     if (!vkutil::load_shader_module(std::string(SHADER_DIR) + "sky.comp.spv", device, &skyShader))
-//     {
-//         throw std::runtime_error("Error while building sky shader!");
-//     }
-
-//     // Create common stageInfo and pipeline info
-//     VkPipelineShaderStageCreateInfo stageInfo{};
-//     stageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-//     stageInfo.pNext = nullptr;
-//     stageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    
-//     VkComputePipelineCreateInfo computePipelineCreateInfo{};
-//     computePipelineCreateInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-//     computePipelineCreateInfo.pNext = nullptr;    
-//     computePipelineCreateInfo.layout = gradientPipelineLayout;
-
-//     // Gradient shader + default colors
-//     stageInfo.module = gradientShader;
-//     stageInfo.pName = "main";
-//     computePipelineCreateInfo.stage = stageInfo;
-
-//     ComputeEffect gradient;
-//     gradient.layout = gradientPipelineLayout;
-//     gradient.name = "gradient";
-//     gradient.data = {};
-
-//     gradient.data.data1 = glm::vec4(1, 0, 0, 1);
-//     gradient.data.data2 = glm::vec4(0, 0, 1, 1);
-
-//     VK_CHECK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &computePipelineCreateInfo, nullptr, &gradient.pipeline));
-
-//     backgroundEffects.push_back(gradient);
-
-//     // Sky shader + default params
-//     stageInfo.module = skyShader;
-//     stageInfo.pName = "main";
-//     computePipelineCreateInfo.stage = stageInfo;
-
-//     ComputeEffect sky;
-//     sky.layout = gradientPipelineLayout;
-//     sky.name = "sky";
-//     sky.data = {};
-
-//     sky.data.data1 = glm::vec4(0.1, 0.2, 0.4, 0.97);
-
-//     VK_CHECK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &computePipelineCreateInfo, nullptr, &sky.pipeline));
-
-//     backgroundEffects.push_back(sky);
-    
-//     // Destroy all structures
-//     vkDestroyShaderModule(device, gradientShader, nullptr);
-//     vkDestroyShaderModule(device, skyShader, nullptr);
-
-//     mainDeletionQueue.push_function([=, this](){
-//         vkDestroyPipelineLayout(device, gradientPipelineLayout, nullptr);
-//         vkDestroyPipeline(device, sky.pipeline, nullptr);
-//         vkDestroyPipeline(device, gradient.pipeline, nullptr);
-//     });
-// }
 
 
 void VulkanEngine::init_imgui()
@@ -884,6 +798,47 @@ AllocatedImage VulkanEngine::create_texture_image(void* data, VkExtent3D size, V
 }
 
 
+AllocatedImage VulkanEngine::create_texture_image_fromfile(std::string filePath)
+{
+    // Read image
+    int texWidth, texHeight, texChannels;
+
+    stbi_uc* pixels = stbi_load((std::string(TEXTURE_DIR) + filePath).data(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+
+    if (!pixels)
+    {
+        throw std::runtime_error("Failed to load texture image " + filePath);
+    }
+
+    AllocatedImage image = create_texture_image(pixels, VkExtent3D{(uint32_t)texWidth, (uint32_t)texHeight, 1}, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT);
+
+    stbi_image_free(pixels);
+
+    return image;
+}
+
+
+void VulkanEngine::addTextureToSim(ComputeSim& sim, std::string textureFile, int binding)
+{
+    AllocatedImage image = create_texture_image_fromfile(textureFile);
+
+    DescImgInfo imageInfo;
+    imageInfo.binding = binding;
+    imageInfo.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    imageInfo.imageView = image.imageView;
+    imageInfo.sampler = defaultSamplerNearest;
+    imageInfo.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    
+    sim.descriptors.push_back(imageInfo);
+    
+    sim.images.push_back(image);
+
+    mainDeletionQueue.push_function([&, this](){
+        destroy_image(sim.images.front()); // Somehow this ensures it all gets deleted correctly?
+    });
+}
+
+
 void VulkanEngine::destroy_image(const AllocatedImage& img)
 {
     vkDestroyImageView(device, img.imageView, nullptr);
@@ -951,21 +906,28 @@ void VulkanEngine::init_default_data()
     newSim.data.data1 = glm::vec4(1, 0, 0, 1);
     newSim.data.data2 = glm::vec4(0, 0, 1, 1);
 
-    // Draw image included in all sims by default?
+    // Draw image included in all sims by default
 
-    // Checkerboard image
-    ComputeSim::descInfo testImage;
-    testImage.binding = 1;
-    testImage.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    testImage.imageView = errorCheckerboardImage.imageView;
-    testImage.sampler = defaultSamplerNearest;
-    testImage.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-
-    newSim.descriptors.push_back(testImage);
+    // Test image
+    addTextureToSim(newSim, "texture.JPEG", 1);
+    addTextureToSim(newSim, "tex2.JPEG", 2);
 
     computeSims.push_back(newSim);
 
+
+    ComputeSim sim2;
+
+    sim2.name = "mushu";
+    sim2.shaderPath = "gradient_color.comp";
+
+    // Default data
+    sim2.pushConstSize = sizeof(ComputePushConstants);
+    sim2.data.data1 = glm::vec4(1, 0, 0, 1);
+    sim2.data.data2 = glm::vec4(0, 0, 1, 1);
+
+    addTextureToSim(sim2, "tex2.JPEG", 1);
+
+    computeSims.push_back(sim2);
 
     // Sky shader sim
     ComputeSim skySim;

@@ -17,15 +17,6 @@ struct ComputePushConstants
 
 struct ComputeSim
 {
-    struct descInfo
-    {
-        int binding;
-        VkDescriptorType type;
-        VkImageView imageView;
-        VkSampler sampler;
-        VkImageLayout layout;
-    };
-
     std::string name;
 
     VkPipeline pipeline;
@@ -38,13 +29,15 @@ struct ComputeSim
 
     // Descriptors
     DescriptorAllocator descAllocator;
-
     VkDescriptorSet descSet;
     VkDescriptorSetLayout descSetLayout;
 
-    std::vector<descInfo> descriptors;
+    std::vector<DescImgInfo> descriptors;
 
     int pushConstSize;
+
+    // Images
+    std::vector<AllocatedImage> images;
 };
 
 
@@ -106,6 +99,7 @@ struct VulkanEngine
         // Draw resources
         AllocatedImage drawImage;
         VkExtent2D drawExtent;
+        DescImgInfo drawImageDescInfo;
 
         // Different compute shaders
         std::vector<ComputeSim> computeSims;
@@ -123,6 +117,7 @@ struct VulkanEngine
         AllocatedImage blackImage;
         AllocatedImage greyImage;
         AllocatedImage errorCheckerboardImage;
+        AllocatedImage nimbusImage;
 
         VkSampler defaultSamplerLinear;
         VkSampler defaultSamplerNearest;
@@ -165,5 +160,8 @@ struct VulkanEngine
 
         AllocatedImage create_image(VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = false);
         AllocatedImage create_texture_image(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = false);
+        AllocatedImage create_texture_image_fromfile(std::string filePath);
         void destroy_image(const AllocatedImage& img);
+
+        void addTextureToSim(ComputeSim& sim, std::string textureFile, int binding);
 };

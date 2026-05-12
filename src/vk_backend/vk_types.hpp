@@ -42,6 +42,16 @@ struct AllocatedBuffer
 };
 
 
+struct DescImgInfo
+{
+    int binding;
+    VkImageView imageView;
+    VkSampler sampler;
+    VkImageLayout layout;
+    VkDescriptorType type;
+};
+
+
 struct DeletionQueue
 {
     std::deque<std::function<void()>> deletors;
