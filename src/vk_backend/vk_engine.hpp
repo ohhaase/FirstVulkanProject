@@ -35,6 +35,13 @@ struct ComputeSim
 
     std::string shaderPath;
     
+
+    // Descriptors
+    DescriptorAllocator descAllocator;
+
+    VkDescriptorSet descSet;
+    VkDescriptorSetLayout descSetLayout;
+
     std::vector<descInfo> descriptors;
 
     int pushConstSize;
@@ -99,12 +106,6 @@ struct VulkanEngine
         // Draw resources
         AllocatedImage drawImage;
         VkExtent2D drawExtent;
-
-        // Descriptors
-        DescriptorAllocator globalDescriptorAllocator;
-
-        VkDescriptorSet globalDescriptorSet;
-        VkDescriptorSetLayout globalDescriptorLayout;
 
         // Different compute shaders
         std::vector<ComputeSim> computeSims;

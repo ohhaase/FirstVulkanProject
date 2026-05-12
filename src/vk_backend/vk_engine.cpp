@@ -455,12 +455,6 @@ void VulkanEngine::destroy_swapchain()
 }
 
 
-void VulkanEngine::init_compute_sims()
-{
-
-}
-
-
 void VulkanEngine::draw_background(VkCommandBuffer commandBuffer)
 {
     // Get our current shader
@@ -470,7 +464,7 @@ void VulkanEngine::draw_background(VkCommandBuffer commandBuffer)
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, thisSim.pipeline);
 
     // Bind descriptor set
-    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, thisSim.layout, 0, 1, &globalDescriptorSet, 0, nullptr);
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, thisSim.layout, 0, 1, &thisSim.descSet, 0, nullptr);
 
     // Push constants
     vkCmdPushConstants(commandBuffer, thisSim.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(ComputePushConstants), &thisSim.data);
@@ -484,56 +478,55 @@ void VulkanEngine::init_descriptors()
 {
     // TODO: MAKE THE LOOPS IN THIS FUNC BETTER
 
-    // Create a descriptor pool to hold 1 set (maybe more, for each sim?) with 1 image each
-    std::vector<DescriptorAllocator::PoolSizeRatio> sizes = {{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1}}; // Draw image by default
-
-    ComputeSim thisComputeSim = computeSims[0];
-
-    for (int i = 0; i < thisComputeSim.descriptors.size(); i++)
+    for (ComputeSim& thisSim: computeSims)
     {
-        DescriptorAllocator::PoolSizeRatio size = {thisComputeSim.descriptors[i].type, 1};
-        sizes.push_back(size);
-    }
+        // Create a descriptor pool to hold 1 set (maybe more, for each sim?) with 1 image each
+        std::vector<DescriptorAllocator::PoolSizeRatio> sizes = {{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1}}; // Draw image by default
 
-    globalDescriptorAllocator.init_pool(device, 1, sizes);
-
-    // Make the descriptor set layout for our compute draw
-    {
-        DescriptorLayoutBuilder builder;
-        builder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE); // Draw image by default
-
-        // Loop over descriptors in the sim
-        for (int i = 0; i < thisComputeSim.descriptors.size(); i++)
+        for (ComputeSim::descInfo& thisDescriptor: thisSim.descriptors)
         {
-            ComputeSim::descInfo thisDescriptor = thisComputeSim.descriptors[i];
-            builder.add_binding(thisDescriptor.binding, thisDescriptor.type);
+            DescriptorAllocator::PoolSizeRatio size = {thisDescriptor.type, 1};
+            sizes.push_back(size);
         }
 
-        globalDescriptorLayout = builder.build(device, VK_SHADER_STAGE_COMPUTE_BIT);
-    }
+        thisSim.descAllocator.init_pool(device, 1, sizes);
 
-    // Allocate a descriptor set for our draw image
-    globalDescriptorSet = globalDescriptorAllocator.allocate(device, globalDescriptorLayout);
-
-    {
-        DescriptorWriter writer;
-        writer.write_image(0, drawImage.imageView, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE); // Draw image by default
-
-        // Other descriptors
-        for (int i = 0; i < thisComputeSim.descriptors.size(); i++)
+        // Make the descriptor set layout for our compute draw
         {
-            ComputeSim::descInfo thisDescriptor = thisComputeSim.descriptors[i];
-            writer.write_image(thisDescriptor.binding, thisDescriptor.imageView, thisDescriptor.sampler, thisDescriptor.layout, thisDescriptor.type);
+            DescriptorLayoutBuilder builder;
+            builder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE); // Draw image by default
+
+            // Loop over descriptors in the sim
+            for (ComputeSim::descInfo& thisDescriptor: thisSim.descriptors)
+            {
+                builder.add_binding(thisDescriptor.binding, thisDescriptor.type);
+            }
+
+            thisSim.descSetLayout = builder.build(device, VK_SHADER_STAGE_COMPUTE_BIT);
         }
 
-        writer.update_set(device, globalDescriptorSet);
-    }
+        // Allocate a descriptor set for our draw image
+        thisSim.descSet = thisSim.descAllocator.allocate(device, thisSim.descSetLayout);
 
-    // Make sure both the descriptor and allocator and the new layout get cleaned up
-    mainDeletionQueue.push_function([=, this](){
-        globalDescriptorAllocator.destroy_pool(device);
-        vkDestroyDescriptorSetLayout(device, globalDescriptorLayout, nullptr);
-    });
+        {
+            DescriptorWriter writer;
+            writer.write_image(0, drawImage.imageView, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE); // Draw image by default
+
+            // Other descriptors
+            for (ComputeSim::descInfo& thisDescriptor: thisSim.descriptors)
+            {
+                writer.write_image(thisDescriptor.binding, thisDescriptor.imageView, thisDescriptor.sampler, thisDescriptor.layout, thisDescriptor.type);
+            }
+
+            writer.update_set(device, thisSim.descSet);
+        }
+
+        // Make sure both the descriptor and allocator and the new layout get cleaned up
+        mainDeletionQueue.push_function([=, this]() mutable {
+            thisSim.descAllocator.destroy_pool(device);
+            vkDestroyDescriptorSetLayout(device, thisSim.descSetLayout, nullptr);
+        });
+    }
 }
 
 
@@ -554,7 +547,7 @@ void VulkanEngine::init_pipelines()
         computeLayout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         computeLayout.pNext = nullptr;
 
-        computeLayout.pSetLayouts = &globalDescriptorLayout; // Maybe make descriptors on a per-sim basis?
+        computeLayout.pSetLayouts = &thisSim.descSetLayout; // Maybe make descriptors on a per-sim basis?
         computeLayout.setLayoutCount = 1;
 
         computeLayout.pPushConstantRanges = &pushConstant;
@@ -985,6 +978,6 @@ void VulkanEngine::init_default_data()
     skySim.data.data1 = glm::vec4(0.1, 0.2, 0.4, 0.97);
 
     // Shouldn't need another image?
-    
+
     computeSims.push_back(skySim);
 }
