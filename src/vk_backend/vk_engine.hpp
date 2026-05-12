@@ -15,36 +15,29 @@ struct ComputePushConstants
     glm::vec4 data4;
 };
 
-struct ComputeEffect
+struct ComputeSim
 {
-    const char* name;
+    struct descInfo
+    {
+        int binding;
+        VkDescriptorType type;
+        VkImageView imageView;
+        VkSampler sampler;
+        VkImageLayout layout;
+    };
+
+    std::string name;
 
     VkPipeline pipeline;
     VkPipelineLayout layout;
 
     ComputePushConstants data;
-};
 
+    std::string shaderPath;
+    
+    std::vector<descInfo> descriptors;
 
-struct DeletionQueue
-{
-    std::deque<std::function<void()>> deletors;
-
-    void push_function(std::function<void()>&& function)
-    {
-        deletors.push_back(function);
-    }
-
-    void flush()
-    {
-        // reverse iterate the deletion queue to execute all the functions
-        for (auto func = deletors.rbegin(); func != deletors.rend(); func++)
-        {
-            (*func)();
-        }
-
-        deletors.clear();
-    }
+    int pushConstSize;
 };
 
 
@@ -110,16 +103,12 @@ struct VulkanEngine
         // Descriptors
         DescriptorAllocator globalDescriptorAllocator;
 
-        VkDescriptorSet drawImageDescriptors;
-        VkDescriptorSetLayout drawImageDescriptorLayout;
-
-        // Pipelines
-        VkPipeline gradientPipeline;
-        VkPipelineLayout gradientPipelineLayout;
+        VkDescriptorSet globalDescriptorSet;
+        VkDescriptorSetLayout globalDescriptorLayout;
 
         // Different compute shaders
-        std::vector<ComputeEffect> backgroundEffects;
-        int currentBackgroundEffect = 0;
+        std::vector<ComputeSim> computeSims;
+        int currentComputeSim = 0;
 
         // Immediate submit structures
         VkFence immFence;
@@ -155,6 +144,7 @@ struct VulkanEngine
         void init_swapchain();
         void init_commands();
         void init_sync_structures();
+        void init_compute_sims();
         void init_descriptors();
         void init_default_data();
 

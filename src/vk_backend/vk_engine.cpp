@@ -202,11 +202,11 @@ void VulkanEngine::run()
 
         if (ImGui::Begin("background"))
         {
-            ComputeEffect& selected = backgroundEffects[currentBackgroundEffect];
+            ComputeSim& selected = computeSims[currentComputeSim];
 
             ImGui::Text("Selected effect: ", selected.name);
 
-            ImGui::SliderInt("Effect Index", &currentBackgroundEffect, 0, backgroundEffects.size() - 1);
+            ImGui::SliderInt("Effect Index", &currentComputeSim, 0, computeSims.size() - 1);
             
             ImGui::InputFloat4("data1", (float*)& selected.data.data1);
             ImGui::InputFloat4("data2", (float*)& selected.data.data2);
@@ -455,19 +455,25 @@ void VulkanEngine::destroy_swapchain()
 }
 
 
+void VulkanEngine::init_compute_sims()
+{
+
+}
+
+
 void VulkanEngine::draw_background(VkCommandBuffer commandBuffer)
 {
     // Get our current shader
-    ComputeEffect& effect = backgroundEffects[currentBackgroundEffect];
+    ComputeSim& thisSim = computeSims[currentComputeSim];
 
     //Bind the background compute pipeline
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, effect.pipeline);
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, thisSim.pipeline);
 
     // Bind descriptor set
-    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, gradientPipelineLayout, 0, 1, &drawImageDescriptors, 0, nullptr);
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, thisSim.layout, 0, 1, &globalDescriptorSet, 0, nullptr);
 
     // Push constants
-    vkCmdPushConstants(commandBuffer, gradientPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(ComputePushConstants), &effect.data);
+    vkCmdPushConstants(commandBuffer, thisSim.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(ComputePushConstants), &thisSim.data);
 
     // Dispatch compute shader
     vkCmdDispatch(commandBuffer, std::ceil(drawExtent.width / 16.0), std::ceil(drawExtent.height / 16.0), 1);
@@ -476,148 +482,209 @@ void VulkanEngine::draw_background(VkCommandBuffer commandBuffer)
 
 void VulkanEngine::init_descriptors()
 {
-    // Create a descriptor pool to hold 10 (?) sets with 1 image each
-    std::vector<DescriptorAllocator::PoolSizeRatio> sizes = {{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1}};
+    // TODO: MAKE THE LOOPS IN THIS FUNC BETTER
 
-    globalDescriptorAllocator.init_pool(device, 10, sizes);
+    // Create a descriptor pool to hold 1 set (maybe more, for each sim?) with 1 image each
+    std::vector<DescriptorAllocator::PoolSizeRatio> sizes = {{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1}}; // Draw image by default
+
+    ComputeSim thisComputeSim = computeSims[0];
+
+    for (int i = 0; i < thisComputeSim.descriptors.size(); i++)
+    {
+        DescriptorAllocator::PoolSizeRatio size = {thisComputeSim.descriptors[i].type, 1};
+        sizes.push_back(size);
+    }
+
+    globalDescriptorAllocator.init_pool(device, 1, sizes);
 
     // Make the descriptor set layout for our compute draw
     {
         DescriptorLayoutBuilder builder;
-        builder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
-        builder.add_binding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-        drawImageDescriptorLayout = builder.build(device, VK_SHADER_STAGE_COMPUTE_BIT);
+        builder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE); // Draw image by default
+
+        // Loop over descriptors in the sim
+        for (int i = 0; i < thisComputeSim.descriptors.size(); i++)
+        {
+            ComputeSim::descInfo thisDescriptor = thisComputeSim.descriptors[i];
+            builder.add_binding(thisDescriptor.binding, thisDescriptor.type);
+        }
+
+        globalDescriptorLayout = builder.build(device, VK_SHADER_STAGE_COMPUTE_BIT);
     }
 
     // Allocate a descriptor set for our draw image
-    drawImageDescriptors = globalDescriptorAllocator.allocate(device, drawImageDescriptorLayout);
+    globalDescriptorSet = globalDescriptorAllocator.allocate(device, globalDescriptorLayout);
 
     {
         DescriptorWriter writer;
-        writer.write_image(0, drawImage.imageView, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
-        writer.write_image(1, errorCheckerboardImage.imageView, defaultSamplerNearest, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        writer.write_image(0, drawImage.imageView, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE); // Draw image by default
 
-        writer.update_set(device, drawImageDescriptors);
+        // Other descriptors
+        for (int i = 0; i < thisComputeSim.descriptors.size(); i++)
+        {
+            ComputeSim::descInfo thisDescriptor = thisComputeSim.descriptors[i];
+            writer.write_image(thisDescriptor.binding, thisDescriptor.imageView, thisDescriptor.sampler, thisDescriptor.layout, thisDescriptor.type);
+        }
+
+        writer.update_set(device, globalDescriptorSet);
     }
-
-    // VkDescriptorImageInfo imgInfo{};
-    // imgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-    // imgInfo.imageView = drawImage.imageView;
-
-    // VkWriteDescriptorSet drawImageWrite = {};
-    // drawImageWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    // drawImageWrite.pNext = nullptr;
-
-    // drawImageWrite.dstBinding = 0;
-    // drawImageWrite.dstSet = drawImageDescriptors;
-    // drawImageWrite.descriptorCount = 1;
-    // drawImageWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    // drawImageWrite.pImageInfo = &imgInfo;
-    
-    // vkUpdateDescriptorSets(device, 1, &drawImageWrite, 0, nullptr);
 
     // Make sure both the descriptor and allocator and the new layout get cleaned up
     mainDeletionQueue.push_function([=, this](){
         globalDescriptorAllocator.destroy_pool(device);
-        vkDestroyDescriptorSetLayout(device, drawImageDescriptorLayout, nullptr);
+        vkDestroyDescriptorSetLayout(device, globalDescriptorLayout, nullptr);
     });
 }
 
 
 void VulkanEngine::init_pipelines()
 {
-    init_background_pipelines();
+    // init_background_pipelines();
+
+    for (ComputeSim& thisSim: computeSims)
+    {
+        // Push constant info
+        VkPushConstantRange pushConstant{};
+        pushConstant.offset = 0;
+        pushConstant.size = thisSim.pushConstSize;
+        pushConstant.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+        // Compute pipeline layout info
+        VkPipelineLayoutCreateInfo computeLayout{};
+        computeLayout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        computeLayout.pNext = nullptr;
+
+        computeLayout.pSetLayouts = &globalDescriptorLayout; // Maybe make descriptors on a per-sim basis?
+        computeLayout.setLayoutCount = 1;
+
+        computeLayout.pPushConstantRanges = &pushConstant;
+        computeLayout.pushConstantRangeCount = 1;
+
+        // Create pipeline layout
+        VK_CHECK(vkCreatePipelineLayout(device, &computeLayout, nullptr, &thisSim.layout));
+
+        // Get shader
+        VkShaderModule shader;
+        if (!vkutil::load_shader_module(std::string(SHADER_DIR) + thisSim.shaderPath + ".spv", device, &shader))
+        {
+            throw std::runtime_error("Error while loading shader for " + thisSim.name);
+        }
+
+        // Create stageInfo and pipelineInfo
+        VkPipelineShaderStageCreateInfo stageInfo{};
+        stageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stageInfo.pNext = nullptr;
+        stageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        stageInfo.module = shader;
+        stageInfo.pName = "main";
+        
+        VkComputePipelineCreateInfo computePipelineCreateInfo{};
+        computePipelineCreateInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+        computePipelineCreateInfo.pNext = nullptr;    
+        computePipelineCreateInfo.layout = thisSim.layout;
+        computePipelineCreateInfo.stage = stageInfo;
+
+        VK_CHECK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &computePipelineCreateInfo, nullptr, &thisSim.pipeline));
+
+        // Destroy all structures
+        vkDestroyShaderModule(device, shader, nullptr);
+
+        mainDeletionQueue.push_function([=, this](){
+            vkDestroyPipelineLayout(device, thisSim.layout, nullptr);
+            vkDestroyPipeline(device, thisSim.pipeline, nullptr);
+        });
+    }
 }
 
 
-void VulkanEngine::init_background_pipelines()
-{
-    // Push constant info
-    VkPushConstantRange pushConstant{};
-    pushConstant.offset = 0;
-    pushConstant.size = sizeof(ComputePushConstants);
-    pushConstant.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+// void VulkanEngine::init_background_pipelines()
+// {
+//     // Push constant info
+//     VkPushConstantRange pushConstant{};
+//     pushConstant.offset = 0;
+//     pushConstant.size = sizeof(ComputePushConstants);
+//     pushConstant.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-    // Compute layout info
-    VkPipelineLayoutCreateInfo computeLayout{};
-    computeLayout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    computeLayout.pNext = nullptr;
+//     // Compute layout info
+//     VkPipelineLayoutCreateInfo computeLayout{};
+//     computeLayout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+//     computeLayout.pNext = nullptr;
 
-    computeLayout.pSetLayouts = &drawImageDescriptorLayout;
-    computeLayout.setLayoutCount = 1;
+//     computeLayout.pSetLayouts = &globalDescriptorLayout;
+//     computeLayout.setLayoutCount = 1;
 
-    computeLayout.pPushConstantRanges = &pushConstant;
-    computeLayout.pushConstantRangeCount = 1;
+//     computeLayout.pPushConstantRanges = &pushConstant;
+//     computeLayout.pushConstantRangeCount = 1;
 
-    VK_CHECK(vkCreatePipelineLayout(device, &computeLayout, nullptr, &gradientPipelineLayout));
+//     VK_CHECK(vkCreatePipelineLayout(device, &computeLayout, nullptr, &gradientPipelineLayout));
 
-    // Get both shaders
-    VkShaderModule gradientShader;
-    if (!vkutil::load_shader_module(std::string(SHADER_DIR) + "gradient_color.comp.spv", device, &gradientShader))
-    {
-        throw std::runtime_error("Error while building compute shader!");
-    }
+//     // Get both shaders
+//     VkShaderModule gradientShader;
+//     if (!vkutil::load_shader_module(std::string(SHADER_DIR) + "gradient_color.comp.spv", device, &gradientShader))
+//     {
+//         throw std::runtime_error("Error while building compute shader!");
+//     }
 
-    VkShaderModule skyShader;
-    if (!vkutil::load_shader_module(std::string(SHADER_DIR) + "sky.comp.spv", device, &skyShader))
-    {
-        throw std::runtime_error("Error while building sky shader!");
-    }
+//     VkShaderModule skyShader;
+//     if (!vkutil::load_shader_module(std::string(SHADER_DIR) + "sky.comp.spv", device, &skyShader))
+//     {
+//         throw std::runtime_error("Error while building sky shader!");
+//     }
 
-    // Create common stageInfo and pipeline info
-    VkPipelineShaderStageCreateInfo stageInfo{};
-    stageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stageInfo.pNext = nullptr;
-    stageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+//     // Create common stageInfo and pipeline info
+//     VkPipelineShaderStageCreateInfo stageInfo{};
+//     stageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+//     stageInfo.pNext = nullptr;
+//     stageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
     
-    VkComputePipelineCreateInfo computePipelineCreateInfo{};
-    computePipelineCreateInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    computePipelineCreateInfo.pNext = nullptr;    
-    computePipelineCreateInfo.layout = gradientPipelineLayout;
+//     VkComputePipelineCreateInfo computePipelineCreateInfo{};
+//     computePipelineCreateInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+//     computePipelineCreateInfo.pNext = nullptr;    
+//     computePipelineCreateInfo.layout = gradientPipelineLayout;
 
-    // Gradient shader + default colors
-    stageInfo.module = gradientShader;
-    stageInfo.pName = "main";
-    computePipelineCreateInfo.stage = stageInfo;
+//     // Gradient shader + default colors
+//     stageInfo.module = gradientShader;
+//     stageInfo.pName = "main";
+//     computePipelineCreateInfo.stage = stageInfo;
 
-    ComputeEffect gradient;
-    gradient.layout = gradientPipelineLayout;
-    gradient.name = "gradient";
-    gradient.data = {};
+//     ComputeEffect gradient;
+//     gradient.layout = gradientPipelineLayout;
+//     gradient.name = "gradient";
+//     gradient.data = {};
 
-    gradient.data.data1 = glm::vec4(1, 0, 0, 1);
-    gradient.data.data2 = glm::vec4(0, 0, 1, 1);
+//     gradient.data.data1 = glm::vec4(1, 0, 0, 1);
+//     gradient.data.data2 = glm::vec4(0, 0, 1, 1);
 
-    VK_CHECK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &computePipelineCreateInfo, nullptr, &gradient.pipeline));
+//     VK_CHECK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &computePipelineCreateInfo, nullptr, &gradient.pipeline));
 
-    backgroundEffects.push_back(gradient);
+//     backgroundEffects.push_back(gradient);
 
-    // Sky shader + default params
-    stageInfo.module = skyShader;
-    stageInfo.pName = "main";
-    computePipelineCreateInfo.stage = stageInfo;
+//     // Sky shader + default params
+//     stageInfo.module = skyShader;
+//     stageInfo.pName = "main";
+//     computePipelineCreateInfo.stage = stageInfo;
 
-    ComputeEffect sky;
-    sky.layout = gradientPipelineLayout;
-    sky.name = "sky";
-    sky.data = {};
+//     ComputeEffect sky;
+//     sky.layout = gradientPipelineLayout;
+//     sky.name = "sky";
+//     sky.data = {};
 
-    sky.data.data1 = glm::vec4(0.1, 0.2, 0.4, 0.97);
+//     sky.data.data1 = glm::vec4(0.1, 0.2, 0.4, 0.97);
 
-    VK_CHECK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &computePipelineCreateInfo, nullptr, &sky.pipeline));
+//     VK_CHECK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &computePipelineCreateInfo, nullptr, &sky.pipeline));
 
-    backgroundEffects.push_back(sky);
+//     backgroundEffects.push_back(sky);
     
-    // Destroy all structures
-    vkDestroyShaderModule(device, gradientShader, nullptr);
-    vkDestroyShaderModule(device, skyShader, nullptr);
+//     // Destroy all structures
+//     vkDestroyShaderModule(device, gradientShader, nullptr);
+//     vkDestroyShaderModule(device, skyShader, nullptr);
 
-    mainDeletionQueue.push_function([=, this](){
-        vkDestroyPipelineLayout(device, gradientPipelineLayout, nullptr);
-        vkDestroyPipeline(device, sky.pipeline, nullptr);
-        vkDestroyPipeline(device, gradient.pipeline, nullptr);
-    });
-}
+//     mainDeletionQueue.push_function([=, this](){
+//         vkDestroyPipelineLayout(device, gradientPipelineLayout, nullptr);
+//         vkDestroyPipeline(device, sky.pipeline, nullptr);
+//         vkDestroyPipeline(device, gradient.pipeline, nullptr);
+//     });
+// }
 
 
 void VulkanEngine::init_imgui()
@@ -879,4 +946,45 @@ void VulkanEngine::init_default_data()
         destroy_image(blackImage);
         destroy_image(errorCheckerboardImage);
     });
+
+    // Make compute sim
+    ComputeSim newSim;
+
+    newSim.name = "FirstSim";
+    newSim.shaderPath = "gradient_color.comp";
+
+    // Default data
+    newSim.pushConstSize = sizeof(ComputePushConstants);
+    newSim.data.data1 = glm::vec4(1, 0, 0, 1);
+    newSim.data.data2 = glm::vec4(0, 0, 1, 1);
+
+    // Draw image included in all sims by default?
+
+    // Checkerboard image
+    ComputeSim::descInfo testImage;
+    testImage.binding = 1;
+    testImage.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    testImage.imageView = errorCheckerboardImage.imageView;
+    testImage.sampler = defaultSamplerNearest;
+    testImage.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+
+    newSim.descriptors.push_back(testImage);
+
+    computeSims.push_back(newSim);
+
+
+    // Sky shader sim
+    ComputeSim skySim;
+
+    skySim.name = "SkySim";
+    skySim.shaderPath = "sky.comp";
+
+    // Default data
+    skySim.pushConstSize = sizeof(ComputePushConstants);
+    skySim.data.data1 = glm::vec4(0.1, 0.2, 0.4, 0.97);
+
+    // Shouldn't need another image?
+    
+    computeSims.push_back(skySim);
 }
